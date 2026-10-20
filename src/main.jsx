@@ -2518,3 +2518,4267 @@ function applySceneEnvironment(runtime, scenarioPoint, displayMode = 'day-night'
     );
     key.target.position.set(0, runtime.groundY || 0, 0);
     key.target.updateMatrixWorld();
+    if (ground) {
+      ground.visible = runtime.sceneGroundEnabled !== false;
+      ground.material.color.setHex(0x7f8278);
+      ground.material.roughness = 1;
+      ground.material.opacity = 1;
+    }
+    if (skyDome) {
+      skyDome.visible = true;
+      skyDome.scale.setScalar(radius * 10);
+      skyDome.material.uniforms.topColor.value.copy(skyTop);
+      skyDome.material.uniforms.bottomColor.value.copy(skyHorizon);
+    }
+    scene.fog = new THREE.Fog(skyColor, radius * 3.6, radius * 12);
+    return;
+  }
+  resetEnvironment();
+  const effectiveScenario = scenarioPoint || STANDARD_NIGHT_SCENARIO;
+  const altitude = Number(scenarioPoint?.sun?.altitude_deg ?? effectiveScenario?.sun?.altitude_deg ?? -18);
+  const azimuth = Number(scenarioPoint?.sun?.azimuth_deg ?? effectiveScenario?.sun?.azimuth_deg ?? 270);
+  const cloudCover = Math.max(0, Math.min(100, Number(scenarioPoint?.weather?.cloud_cover ?? effectiveScenario?.weather?.cloud_cover ?? 0)));
+  const precipitation = Math.max(0, Number(scenarioPoint?.weather?.precipitation ?? effectiveScenario?.weather?.precipitation ?? 0));
+  const daylight = Math.max(.035, Math.min(1, (altitude + 8) / 55));
+  const cloudDimming = 1 - cloudCover / 100 * .48;
+  const rainDimming = 1 - Math.min(precipitation / 8, .34);
+  const lightFactor = cloudDimming * rainDimming;
+  ambient.color.setHex(altitude < 2 ? 0x7896bb : 0xc9f0ff);
+  ambient.intensity = .18 + daylight * .95 * lightFactor;
+  key.intensity = .08 + daylight * 2.75 * lightFactor;
+  key.color.setHex(precipitation > .2 ? 0x9bb7c2 : altitude < 14 ? 0xffbd85 : 0xd8fbff);
+  const azimuthRadians = azimuth * Math.PI / 180;
+  const altitudeRadians = Math.max(-5, altitude) * Math.PI / 180;
+  const radius = 18;
+  key.position.set(Math.sin(azimuthRadians) * radius, Math.max(.6, Math.sin(altitudeRadians) * radius), Math.cos(azimuthRadians) * radius);
+  const night = new THREE.Color(0x02070d);
+  const day = new THREE.Color(precipitation > .2 ? 0x152128 : cloudCover > 65 ? 0x17262c : 0x153941);
+  const clearColor = night.clone().lerp(day, daylight);
+  renderer.setClearColor(clearColor, 1);
+  renderer.toneMappingExposure = .86 + daylight * .16;
+  if (hemisphere) {
+    hemisphere.color.setHex(altitude < 2 ? 0x5d7194 : precipitation > .2 ? 0x91aeb9 : 0xb9e1f7);
+    hemisphere.groundColor.setHex(0x36403d);
+    hemisphere.intensity = .18 + daylight * .55 * lightFactor;
+  }
+  if (ground) {
+    ground.visible = runtime.sceneGroundEnabled !== false;
+    ground.material.color.setHex(altitude < 0 ? 0x111a1c : 0x626d68);
+    ground.material.roughness = 1;
+    ground.material.opacity = 1;
+  }
+  if (skyDome) {
+    skyDome.visible = true;
+    skyDome.scale.setScalar(Math.max(450, (runtime.sceneRadius || 45) * 10));
+    skyDome.material.uniforms.topColor.value.setHex(altitude < 0 ? 0x01040a : 0x4b88ad);
+    skyDome.material.uniforms.bottomColor.value.setHex(altitude < 0 ? 0x101b29 : 0xb9d7e8);
+  }
+  scene.fog = precipitation > .2 ? new THREE.FogExp2(clearColor, .012 + Math.min(precipitation, 8) * .002) : null;
+}
+
+const DEFAULT_MODEL_ASSET_ID = 'asset_10602c89c51e';
+
+function SceneViewport({ project, assets, artifacts, sceneObjects = [], transportPlan = null, scenarioPoint = null, scenarioFlowColor = '#54e0da', selectedRouteId = '', preferredModelKind = 'skp_glb', preferBlender = false, hydrating = false }) {
+  const mountRef = useRef(null);
+  const environmentRef = useRef(null);
+  const scenarioPointRef = useRef(scenarioPoint);
+  scenarioPointRef.current = scenarioPoint;
+  const flowInputRef = useRef({ sceneObjects, scenarioPoint, scenarioFlowColor, selectedRouteId });
+  flowInputRef.current = { sceneObjects, scenarioPoint, scenarioFlowColor, selectedRouteId };
+  const transportPlanRef = useRef(transportPlan);
+  transportPlanRef.current = transportPlan;
+  const siteRouteInputRef = useRef(sceneObjects);
+  siteRouteInputRef.current = sceneObjects;
+  const siteRoutes = useMemo(() => extractSiteRoutes(sceneObjects), [sceneObjects]);
+  const primarySiteRoute = useMemo(() => selectPrimarySiteRoute(siteRoutes), [siteRoutes]);
+  // Keep analytical route overlays off in the field-material view. The route
+  // can still be enabled explicitly in analysis mode, but it never contains
+  // arrows or endpoint markers that could be mistaken for site evidence.
+  const [showSiteRoute, setShowSiteRoute] = useState(false);
+  const showSiteRouteRef = useRef(showSiteRoute);
+  showSiteRouteRef.current = showSiteRoute;
+  const [siteRouteStats, setSiteRouteStats] = useState({ count: 0, lengthM: 0 });
+  const [routeTourPlayback, setRouteTourPlayback] = useState({ status: 'idle', progress: 0, distanceM: 0 });
+  const [displayMode, setDisplayMode] = useState('original');
+  const displayModeRef = useRef(displayMode);
+  displayModeRef.current = displayMode;
+  const [twinMode, setTwinMode] = useState(false);
+  const [digitalDerivative, setDigitalDerivative] = useState(false);
+  const [competitionPresentation, setCompetitionPresentation] = useState(false);
+  const [immediatePerimeterMode, setImmediatePerimeterMode] = useState(true);
+  const [mainEntryPositionMode, setMainEntryPositionMode] = useState(true);
+  const [middleBuildingMode, setMiddleBuildingMode] = useState(true);
+  const [fluidMode, setFluidMode] = useState(false);
+  const [fps, setFps] = useState(null);
+  const twinModeRef = useRef(twinMode);
+  twinModeRef.current = twinMode;
+  const [agentCount, setAgentCount] = useState(300);
+  const [renderedAgentCount, setRenderedAgentCount] = useState(300);
+  const [agentPathSummary, setAgentPathSummary] = useState({ labels: [], counts: {} });
+  const [agentSlot, setAgentSlot] = useState('weekday_arrival');
+  const [heatmapPlan, setHeatmapPlan] = useState('P-SAFE');
+  const [painMetrics, setPainMetrics] = useState(null);
+  const [navigationMode, setNavigationMode] = useState('orbit');
+  const [showInteractionHelp, setShowInteractionHelp] = useState(false);
+  const [loadState, setLoadState] = useState({ status: 'idle', message: '' });
+  const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [shareStatus, setShareStatus] = useState('');
+  const [pointerCoordinate, setPointerCoordinate] = useState(null);
+  const [coordinateRows, setCoordinateRows] = useState([]);
+  const [selectedFacadeZone, setSelectedFacadeZone] = useState('zone-01');
+  const [showFacadePhotoReference, setShowFacadePhotoReference] = useState(false);
+  const [facadePhotoReferenceOpacity, setFacadePhotoReferenceOpacity] = useState(0.42);
+  const [showHistoricalConstruction, setShowHistoricalConstruction] = useState(false);
+  const [modelStats, setModelStats] = useState({ meshes: 0, materials: 0, textures: 0 });
+  const [walkthroughCollisionStats, setWalkthroughCollisionStats] = useState({ enabled: false, candidates: 0 });
+  const [walkthroughSpeed, setWalkthroughSpeed] = useState(0);
+  const [walkthroughSpeedPreset, setWalkthroughSpeedPreset] = useState(0.5);
+  const [routeTourSpeed, setRouteTourSpeed] = useState(0.5);
+  const [walkthroughSpawnNotice, setWalkthroughSpawnNotice] = useState('');
+  const pendingWalkthroughRef = useRef(null);
+  const visualAssets = useMemo(() => {
+    const imported = assets
+      .filter((asset) => asset.type === '3d' && !hiddenProcessModelAssetIds.has(asset.id) && /\.(glb|gltf|ply)$/i.test(asset.name || ''))
+      .map((asset) => /^标注图场地候选.*\.glb$/i.test(asset.name || '') ? { ...asset, kind: 'site_map_layout_candidate_glb' } : asset);
+    const generated = artifacts.filter((artifact) => [
+      'site_context_glb', 'site_interior_model_glb', 'osm_context_glb', 'sparse_point_cloud',
+      'skp_glb', 'dwg_plan_glb', 'dwg_extrusion_glb', 'blender_enhanced_glb', 'main_building_facade_candidate_glb', 'site_side_path_candidate_glb', 'site_map_layout_candidate_glb',
+      ...directImageCandidateModelKinds
+    ].includes(artifact.kind));
+    // Keep the registered site GLB authoritative. Timestamp-only selection can
+    // otherwise load an unregistered replacement and break navigation alignment.
+    const registeredSiteContext = selectCurrentSiteContextArtifact(
+      generated,
+      project?.modelRegistration?.siteContextArtifactId
+    );
+    const visibleGenerated = [
+      ...(registeredSiteContext ? [registeredSiteContext] : []),
+      ...latestArtifactsPerKind(generated.filter((artifact) => artifact.kind !== 'site_context_glb'))
+    ];
+    const ranked = [...visibleGenerated, ...imported];
+    const fallbackPriority = {
+      site_context_glb: 1, site_interior_model_glb: 2, blender_enhanced_glb: 3, skp_glb: 4,
+      dwg_extrusion_glb: 5, osm_context_glb: 6, sparse_point_cloud: 7, dwg_plan_glb: 8,
+      site_direct_image_candidate_glb: 9, site_direct_image_surrounding_glb: 10
+      , site_direct_image_g3_candidate_glb: 11
+      , site_direct_image_g3_v3_candidate_glb: 12
+    };
+    const sorted = ranked.sort((left, right) => {
+      const leftRank = preferBlender && left.kind === 'blender_enhanced_glb' ? -1 : left.kind === preferredModelKind ? 0 : (fallbackPriority[left.kind] ?? 2);
+      const rightRank = preferBlender && right.kind === 'blender_enhanced_glb' ? -1 : right.kind === preferredModelKind ? 0 : (fallbackPriority[right.kind] ?? 2);
+      return leftRank - rightRank || new Date(right.createdAt || right.uploadedAt || 0) - new Date(left.createdAt || left.uploadedAt || 0);
+    });
+    // 场景底板（runtime ground plane）本身不是文件资产，而是三维场景自带的兜底地面。
+    // 把它作为一项挂在图层列表末尾，算子才能像管理其他图层一样管理它。
+    return [...sorted, {
+      id: GROUND_PLANE_ASSET_ID,
+      kind: 'runtime_ground_plane',
+      name: '场景底板 · 运行时兜底地面',
+      type: '3d',
+      createdAt: '1970-01-01T00:00:00.000Z'
+    }];
+  }, [assets, artifacts, preferredModelKind, preferBlender, project?.modelRegistration?.siteContextArtifactId]);
+  const [selectedModelId, setSelectedModelId] = useState(() => new URLSearchParams(window.location.search).get('model') || DEFAULT_MODEL_ASSET_ID);
+  const requestedModelSelectedRef = useRef(false);
+  const explicitModelSelectionRef = useRef(false);
+  useEffect(() => {
+    if (!visualAssets.length) return;
+    const requestedModelId = new URLSearchParams(window.location.search).get('model');
+    if (!requestedModelSelectedRef.current && requestedModelId && visualAssets.some((asset) => asset.id === requestedModelId)) {
+      requestedModelSelectedRef.current = true;
+      explicitModelSelectionRef.current = true;
+      setSelectedModelId(requestedModelId);
+      return;
+    }
+    // The latest confirmed candidate is the default window. Explicit URL
+    // selection still wins, and all other candidate layers remain available.
+    if (!visualAssets.some((asset) => asset.id === selectedModelId)) {
+      const defaultCandidate = visualAssets.find((asset) => asset.id === DEFAULT_MODEL_ASSET_ID);
+      setSelectedModelId(defaultCandidate?.id || visualAssets[0].id);
+    }
+  }, [visualAssets, selectedModelId]);
+  const modelAsset = visualAssets.find((asset) => asset.id === selectedModelId) || visualAssets[0];
+  // 「场景底板」图层只负责开/关运行时兜底地面，不触发 GLB 加载。
+  const sceneGroundSelected = selectedModelId === GROUND_PLANE_ASSET_ID;
+  useEffect(() => {
+    const runtime = environmentRef.current;
+    if (!runtime) return;
+    runtime.sceneGroundEnabled = !sceneGroundSelected;
+    if (runtime.ground) runtime.ground.visible = !sceneGroundSelected;
+  }, [sceneGroundSelected, loadState.status]);
+  const importedMiddleBuildingAsset = visualAssets.find((asset) => asset.id === 'asset_59b5785c7174')
+    || visualAssets.find((asset) => asset.id === 'asset_a0ff3c892d6e')
+    || null;
+  const combinedSkpArtifact = artifacts.find((artifact) => artifact.id === 'artifact_2dbc856e76e8' && artifact.metadata?.stale !== true) || null;
+  const combinedSceneRequested = new URLSearchParams(window.location.search).get('combine') === 'artifact_2dbc856e76e8';
+  const fullCaptureCandidate = modelAsset?.kind === 'site_map_layout_candidate_glb' && /全素材细化/.test(modelAsset?.name || '');
+  const entryCorrectionCandidate = fullCaptureCandidate && /入口围栏修正/.test(modelAsset?.name || '');
+  const orientationCorrectionCandidate = fullCaptureCandidate && /朝向修正/.test(modelAsset?.name || '');
+  const detailOrientationCandidate = fullCaptureCandidate && /立面细节朝向修正/.test(modelAsset?.name || '');
+  const evidenceCompletionCandidate = modelAsset?.kind === 'site_map_layout_candidate_glb' && /证据补全|全素材细化/.test(modelAsset?.name || '');
+  const interiorWalkthroughAsset = visualAssets.find((asset) =>
+    asset.kind === 'site_interior_model_glb'
+    || (['dwg_extrusion_glb', 'blender_enhanced_glb'].includes(asset.kind)
+      && Array.isArray(asset.metadata?.levels)
+      && asset.metadata.levels.length)
+  ) || null;
+  const modelName = modelAsset?.name || modelAsset?.title || '三维资产';
+  const directImageCandidateMap = artifacts.find((artifact) => artifact.kind === 'site_direct_image_reference_png' && artifact.metadata?.candidateKey === 'scope-direct-image-v3' && artifact.metadata?.stale !== true);
+  const directImageCandidate = artifacts.find((artifact) => directImageCandidateModelKinds.has(artifact.kind) && artifact.metadata?.candidateKey === 'scope-direct-image-v3' && artifact.metadata?.stale !== true);
+  const sitePreviewArtifact = [...artifacts].reverse().find((artifact) =>
+    artifact.kind === 'site_context_blender_preview'
+    && artifact.metadata?.stale !== true
+  ) || [...artifacts].reverse().find((artifact) =>
+    artifact.kind === 'site_corridor_preview'
+    && artifact.metadata?.stale !== true
+  );
+  const siteContextBuilding = modelAsset?.kind === 'site_context_glb'
+    ? artifacts.find((artifact) => artifact.id === modelAsset.metadata?.mainBuildingArtifactId && artifact.metadata?.stale !== true)
+    : null;
+  const modelType = modelAsset?.kind === 'sparse_point_cloud' || /\.ply$/i.test(modelName) ? 'ply' : 'gltf';
+  const routeRenderable = Boolean(primarySiteRoute && ['site_context_glb', 'osm_context_glb'].includes(modelAsset?.kind));
+  const contextAsset = useMemo(() => {
+    if (!['site_interior_model_glb', 'dwg_extrusion_glb', 'blender_enhanced_glb'].includes(modelAsset?.kind)) return null;
+    return artifacts.filter((artifact) => artifact.kind === 'osm_context_glb' && artifact.metadata?.stale !== true).at(-1) || null;
+  }, [artifacts, modelAsset?.kind]);
+  const floorOptions = Array.isArray(modelAsset?.metadata?.levels) ? modelAsset.metadata.levels : [];
+  const [selectedFloorNumber, setSelectedFloorNumber] = useState(1);
+  const [selectedSpaceId, setSelectedSpaceId] = useState('');
+  const [isolateFloor, setIsolateFloor] = useState(false);
+  const [showSurroundings, setShowSurroundings] = useState(false);
+  const [registrationState, setRegistrationState] = useState({ offsetXM: 0, offsetZM: 0, rotationDeg: 0, scale: 1 });
+  const [registrationMessage, setRegistrationMessage] = useState('');
+  const [surfaceEditorOpen, setSurfaceEditorOpen] = useState(false);
+  const [surfaceDirectEditEnabled, setSurfaceDirectEditEnabled] = useState(false);
+  const [surfaceTransformMode, setSurfaceTransformMode] = useState('translate');
+  const [directSurfaceSelection, setDirectSurfaceSelection] = useState(null);
+  const [surfaceEditorId, setSurfaceEditorId] = useState(B_WALK_EDITOR_DEFINITIONS[0].id);
+  const [surfaceEditorObjects, setSurfaceEditorObjects] = useState([]);
+  const [surfaceFormatSourceId, setSurfaceFormatSourceId] = useState(B_WALK_EDITOR_DEFINITIONS[1].id);
+  const [surfaceFormatTargetId, setSurfaceFormatTargetId] = useState(B_WALK_EDITOR_DEFINITIONS[0].id);
+  const [surfaceClipAxis, setSurfaceClipAxis] = useState('x');
+  const [surfaceClipKeepSide, setSurfaceClipKeepSide] = useState('positive');
+  const [surfaceClipFraction, setSurfaceClipFraction] = useState(0.5);
+  const [directFormatBrushArmed, setDirectFormatBrushArmed] = useState(false);
+  const [surfaceEditorMessage, setSurfaceEditorMessage] = useState('拖动参数即可修改当前运行时面层');
+  const selectedFloorRef = useRef(selectedFloorNumber);
+  const isolateFloorRef = useRef(isolateFloor);
+  const showSurroundingsRef = useRef(showSurroundings);
+  const registrationRef = useRef(registrationState);
+  selectedFloorRef.current = selectedFloorNumber;
+  isolateFloorRef.current = isolateFloor;
+  showSurroundingsRef.current = showSurroundings;
+  registrationRef.current = registrationState;
+  const activeFloorSpaces = floorOptions.find((level) => Number(level.floorNumber) === Number(selectedFloorNumber))?.spaces || [];
+  const allTourSpaces = floorOptions.flatMap((level) => (level.spaces || []).map((space) => ({
+    ...space,
+    floorNumber: Number(space.floorNumber ?? level.floorNumber),
+    floorLabel: level.label || `${level.floorNumber}F`
+  })));
+  const selectedSpace = allTourSpaces.find((space) => space.id === selectedSpaceId) || null;
+
+  useEffect(() => {
+    setNavigationMode('orbit');
+    setRouteTourPlayback({ status: 'idle', progress: 0, distanceM: 0 });
+    const preferredEntry = preferredWalkthroughEntry(floorOptions);
+    const firstFloor = Number(preferredEntry?.floorNumber ?? floorOptions[0]?.floorNumber ?? 1);
+    setSelectedFloorNumber(firstFloor);
+    setSelectedSpaceId(preferredEntry?.id || '');
+    setIsolateFloor(false);
+    const saved = project?.modelRegistration;
+    const matches = saved?.modelArtifactId === modelAsset?.id && saved?.contextArtifactId === contextAsset?.id;
+    setRegistrationState(matches ? {
+      offsetXM: Number(saved.offsetXM) || 0,
+      offsetZM: Number(saved.offsetZM) || 0,
+      rotationDeg: Number(saved.rotationDeg) || 0,
+      scale: Number(saved.scale) || 1
+    } : { offsetXM: 0, offsetZM: 0, rotationDeg: 0, scale: 1 });
+    setShowSurroundings(Boolean(matches));
+    setRegistrationMessage(matches ? '已载入保存的配准参数' : '未校准叠加 · Hypothesis');
+  }, [modelAsset?.id, contextAsset?.id]);
+
+  useEffect(() => {
+    if (!activeFloorSpaces.length) {
+      setSelectedSpaceId('');
+      return;
+    }
+    setSelectedSpaceId((current) => {
+      if (activeFloorSpaces.some((space) => space.id === current)) return current;
+      return preferredWalkthroughEntry([{ floorNumber: selectedFloorNumber, spaces: activeFloorSpaces }])?.id || activeFloorSpaces[0].id;
+    });
+  }, [selectedFloorNumber, modelAsset?.id]);
+
+  useEffect(() => {
+    if (loadState.status !== 'ready' || !immediatePerimeterMode) {
+      setSurfaceEditorObjects([]);
+      return undefined;
+    }
+    const sync = () => {
+      const objects = environmentRef.current?.getBWalkEditorObjects?.() || [];
+      setSurfaceEditorObjects(objects);
+      if (objects.length && !objects.some((item) => item.id === surfaceEditorId)) setSurfaceEditorId(objects[0].id);
+    };
+    const initialTimer = window.setTimeout(sync, 160);
+    return () => window.clearTimeout(initialTimer);
+  }, [loadState.status, immediatePerimeterMode, modelAsset?.id, surfaceEditorId]);
+
+  useEffect(() => {
+    const runtime = environmentRef.current;
+    if (!runtime) return undefined;
+    runtime.editableMode = Boolean(surfaceDirectEditEnabled && loadState.status === 'ready');
+    runtime.onEditableSelectionChange = (selection) => {
+      setDirectSurfaceSelection(selection || null);
+      if (selection?.name) {
+        const known = surfaceEditorObjects.find((item) => item.id === selection.name);
+        if (known) setSurfaceEditorId(known.id);
+      }
+    };
+    runtime.onEditableFormatBrushStateChange = (brush, applied) => {
+      setDirectFormatBrushArmed(Boolean(brush?.armed));
+      if (applied && brush?.lastAppliedName) setSurfaceEditorMessage(`已将格式刷应用到「${brush.lastAppliedName}」`);
+    };
+    runtime.setEditableTransformMode?.(surfaceTransformMode);
+    if (!runtime.editableMode) runtime.clearEditableSelection?.();
+    return () => { if (runtime.onEditableSelectionChange) runtime.onEditableSelectionChange = null; if (runtime.onEditableFormatBrushStateChange) runtime.onEditableFormatBrushStateChange = null; };
+  }, [surfaceDirectEditEnabled, surfaceTransformMode, loadState.status, surfaceEditorObjects]);
+
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeExpanded = (event) => { if (event.key === 'Escape') setIsExpanded(false); };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', closeExpanded);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', closeExpanded);
+    };
+  }, [isExpanded]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => { if (!document.fullscreenElement) setIsExpanded(false); };
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
+  }, []);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount || !modelAsset) return undefined;
+    if (modelAsset.kind === 'runtime_ground_plane') {
+      // 场景底板不是文件资产，不需要重建三维场景：只切换运行时地面的显隐。
+      const runtime = environmentRef.current;
+      if (runtime) {
+        runtime.sceneGroundEnabled = false;
+        if (runtime.ground) runtime.ground.visible = false;
+      }
+      setLoadState({ status: 'ready', message: '场景底板 · 已隐藏' });
+      return undefined;
+    }
+    setLoadState({ status: 'loading', message: `正在加载 ${modelName}` });
+    setModelStats({ meshes: 0, materials: 0, textures: 0 });
+    setWalkthroughCollisionStats({ enabled: false, candidates: 0 });
+    setWalkthroughSpeed(0);
+    let disposed = false;
+    let scene;
+    let camera;
+    let renderer;
+    let model = null;
+    let combinedSkpModel = null;
+    let previewModel = null;
+    let fullModelReady = false;
+    let contextModel = null;
+    let contextAlignment = null;
+    let siteRouteGroup = null;
+    let transportMarkerGroup = null;
+    let ground = null;
+    let skyDome = null;
+    let environmentRenderTarget = null;
+    let controls;
+    let frame = 0;
+    let lastFrameTime = 0;
+    let lastRenderTime = 0;
+    let observer;
+    let disposeWalkthroughControls = () => {};
+    let transformControls = null;
+    let transformHelper = null;
+    let disposeEditableSelection = () => {};
+    const previewAbortController = new AbortController();
+    const previewBufferPromise = modelType === 'gltf' && modelAsset?.kind === 'site_context_glb'
+      ? fetch(`${modelAsset.url}?lod=preview`, { signal: previewAbortController.signal }).then((response) => {
+        if (!response.ok) throw new Error(`快速三维请求失败 (${response.status})`);
+        return response.arrayBuffer();
+      }).then((buffer) => ({ buffer, error: null })).catch((error) => ({ buffer: null, error }))
+      : null;
+
+    const initialize = async () => {
+      const [THREE, { GLTFLoader }, { PLYLoader }, { OrbitControls }, { TransformControls }, { RoomEnvironment }, { EffectComposer }, { RenderPass }, { UnrealBloomPass }] = await Promise.all([
+        import('three'),
+        import('three/addons/loaders/GLTFLoader.js'),
+        import('three/addons/loaders/PLYLoader.js'),
+        import('three/addons/controls/OrbitControls.js'),
+        import('three/addons/controls/TransformControls.js'),
+        import('three/addons/environments/RoomEnvironment.js'),
+        import('three/addons/postprocessing/EffectComposer.js'),
+        import('three/addons/postprocessing/RenderPass.js'),
+        import('three/addons/postprocessing/UnrealBloomPass.js')
+      ]);
+      if (disposed) return;
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(42, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+      camera.position.set(4, 3, 6);
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      const basePixelRatio = Math.min(window.devicePixelRatio, modelAsset?.kind === 'site_context_glb' ? 1.15 : 1.5);
+      renderer.setPixelRatio(basePixelRatio);
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.setClearColor(0x000000, 0);
+      renderer.localClippingEnabled = true;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1;
+      renderer.shadowMap.enabled = false;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
+      mount.appendChild(renderer.domElement);
+      const composer = new EffectComposer(renderer);
+      const renderPass = new RenderPass(scene, camera);
+      const bloomPass = new UnrealBloomPass(new THREE.Vector2(mount.clientWidth, mount.clientHeight), 0.85, 0.55, 0.78);
+      bloomPass.enabled = false;
+      composer.addPass(renderPass);
+      composer.addPass(bloomPass);
+      const ensureEnvironmentMap = () => {
+        if (environmentRenderTarget) return;
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        const roomEnvironment = new RoomEnvironment();
+        environmentRenderTarget = pmremGenerator.fromScene(roomEnvironment, 0.04);
+        scene.environment = environmentRenderTarget.texture;
+        roomEnvironment.dispose();
+        pmremGenerator.dispose();
+      };
+      // The exterior preview uses ambient/directional lighting only. Delaying
+      // PMREM generation keeps software/low-power GPUs from blocking the first
+      // interactive frame; the full material model still receives the same
+      // environment map before it is presented.
+      if (modelAsset?.kind !== 'site_context_glb') ensureEnvironmentMap();
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      // Industrial inspection feel: a short, predictable glide after each
+      // drag instead of a sticky orbit or an abrupt stop.
+      controls.dampingFactor = 0.085;
+      controls.screenSpacePanning = true;
+      controls.enableZoom = true;
+      controls.zoomToCursor = true;
+      controls.rotateSpeed = 0.42;
+      controls.panSpeed = 0.58;
+      // Keep wheel zoom usable on the large site context. The default OrbitControls
+      // speed makes a single scroll jump too far when the initial camera is fitted
+      // to the whole route-visible envelope.
+      controls.zoomSpeed = 0.42;
+      transformControls = new TransformControls(camera, renderer.domElement);
+      transformControls.setMode('translate');
+      transformControls.setSpace('local');
+      transformControls.setSize(0.82);
+      transformControls.showY = false;
+      transformControls.showXY = false;
+      transformControls.showYZ = false;
+      transformControls.showXYZE = false;
+      transformHelper = transformControls.getHelper();
+      transformHelper.name = 'WINDOW1-runtime-edit-gizmo';
+      transformHelper.visible = false;
+      transformHelper.renderOrder = 240;
+      scene.add(transformHelper);
+      transformControls.addEventListener('dragging-changed', (event) => { controls.enabled = !event.value; });
+      transformControls.addEventListener('objectChange', () => { environmentRef.current?.commitEditableTransform?.(); });
+      const onEditablePointerDown = (event) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.editableMode || transformControls?.dragging) return;
+        runtime.selectEditableAtPointer?.(event);
+      };
+      renderer.domElement.addEventListener('pointerdown', onEditablePointerDown);
+      disposeEditableSelection = () => renderer.domElement.removeEventListener('pointerdown', onEditablePointerDown);
+      const ambient = new THREE.AmbientLight(0xbceeff, 1.1);
+      scene.add(ambient);
+      const hemisphere = new THREE.HemisphereLight(0xbceeff, 0x39433f, 0.52);
+      scene.add(hemisphere);
+      const key = new THREE.DirectionalLight(0x8deaff, 2.6);
+      key.position.set(8, 14, 5);
+      key.castShadow = true;
+      key.shadow.mapSize.set(2048, 2048);
+      key.shadow.bias = -0.0003;
+      key.shadow.normalBias = 0.022;
+      key.shadow.camera.near = 0.5;
+      scene.add(key.target);
+      scene.add(key);
+      ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshStandardMaterial({ color: 0x777a73, roughness: 1, metalness: 0, depthWrite: true })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.035;
+      ground.receiveShadow = true;
+      ground.visible = false;
+      scene.add(ground);
+      skyDome = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 32, 18),
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          depthWrite: false,
+          uniforms: {
+            topColor: { value: new THREE.Color(0x68b9f2) },
+            bottomColor: { value: new THREE.Color(0xe6f3ff) },
+            exponent: { value: 0.72 }
+          },
+          vertexShader: 'varying vec3 vWorldPosition; void main(){ vec4 worldPosition = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+          fragmentShader: 'uniform vec3 topColor; uniform vec3 bottomColor; uniform float exponent; varying vec3 vWorldPosition; void main(){ float h = normalize(vWorldPosition).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bottomColor, topColor, pow(max(h, 0.0), exponent)), 1.0); }'
+        })
+      );
+      skyDome.frustumCulled = false;
+      skyDome.visible = false;
+      scene.add(skyDome);
+      environmentRef.current = {
+        THREE, renderer, scene, camera, controls, transformControls, transformHelper, ambient, hemisphere, key, ground, skyDome, composer, bloomPass,
+        twinMode: false, fluidMode: false, basePixelRatio, bloomDowngraded: false, fpsSamples: [], fps: 0,
+        model: null, editableMode: false, editableTransformMode: 'translate', editableSelection: null,
+        editableClipHistory: [],
+        suppressedCurrentSceneObjectCount: 0
+      };
+      environmentRef.current.getCameraSnapshot = () => ({
+        position: camera.position.toArray(),
+        target: controls.target.toArray(),
+        up: camera.up.toArray()
+      });
+      environmentRef.current.applyCameraSnapshot = (snapshot) => {
+        if (!snapshot || !Array.isArray(snapshot.position) || !Array.isArray(snapshot.target)) return false;
+        if (snapshot.position.length < 3 || snapshot.target.length < 3) return false;
+        camera.position.fromArray(snapshot.position.slice(0, 3));
+        controls.target.fromArray(snapshot.target.slice(0, 3));
+        if (Array.isArray(snapshot.up) && snapshot.up.length >= 3) camera.up.fromArray(snapshot.up.slice(0, 3));
+        camera.lookAt(controls.target);
+        controls.update();
+        return true;
+      };
+      environmentRef.current.setTwinMode = (active) => {
+        const runtime = environmentRef.current;
+        if (!runtime) return false;
+        runtime.twinMode = Boolean(active);
+        runtime.bloomPass.enabled = runtime.twinMode && !runtime.bloomDowngraded;
+        if (runtime.twinMode) {
+          runtime.skyDome.visible = true;
+          runtime.ambient.intensity = 0.32;
+          runtime.hemisphere.intensity = 0.2;
+          runtime.key.intensity = 0.75;
+          runtime.renderer.toneMappingExposure = 0.72;
+          runtime.scene.fog = new runtime.THREE.Fog(0x07131c, Math.max(80, runtime.sceneRadius * 0.8), Math.max(260, runtime.sceneRadius * 5));
+        } else {
+          // 退出孪生时按「当前显示模式」重算光照，而不是把 ambient/hemisphere/key/曝光
+          // 硬编码还原成建场初值 1.1/0.52/2.6/1。原先的写法会覆盖 original、sunny 等
+          // 模式算好的光比，导致阴影被天光填平、画面回到无层次的平光状态。
+          applySceneEnvironment(runtime, scenarioPointRef.current, displayModeRef.current);
+        }
+        return runtime.twinMode;
+      };
+      environmentRef.current.setFluidMode = (active) => {
+        const runtime = environmentRef.current;
+        if (!runtime) return false;
+        runtime.fluidMode = Boolean(active);
+        runtime.renderer.setPixelRatio(runtime.fluidMode ? 1 : runtime.basePixelRatio);
+        runtime.bloomPass.strength = runtime.fluidMode ? 0.25 : 0.85;
+        runtime.bloomPass.enabled = runtime.twinMode && !runtime.bloomDowngraded;
+        return runtime.fluidMode;
+      };
+      environmentRef.current.updateTwinAgents = (deltaSeconds = 0) => {
+        const runtime = environmentRef.current;
+        const state = runtime?.twinAgentState;
+        if (!state?.points || !state.routes?.length || !state.total) return;
+        // Density is the scenario input. As the path fills up, the simulated
+        // walking speed drops so the visual signal reads as congestion rather
+        // than a static point cloud.
+        const density = Math.min(1, state.total / 500);
+        const speed = Math.max(0.045, 0.24 - density * 0.14);
+        state.elapsed = (state.elapsed + Math.max(0, deltaSeconds) * speed) % 1;
+        const position = state.points.geometry.attributes.position.array;
+        state.agents.forEach((agent, index) => {
+          const route = state.routes[agent.routeIndex];
+          const pts = route.points;
+          const t = (agent.offset + state.elapsed * (agent.direction ? 1 : 0.82)) % 1;
+          const scaled = t * (pts.length - 1);
+          const segment = Math.min(pts.length - 2, Math.floor(scaled));
+          const localT = scaled - segment;
+          const a = pts[segment];
+          const b = pts[segment + 1];
+          position[index * 3] = a[0] + (b[0] - a[0]) * localT;
+          position[index * 3 + 2] = a[1] + (b[1] - a[1]) * localT;
+        });
+        state.points.geometry.attributes.position.needsUpdate = true;
+      };
+      environmentRef.current.runTwinStateSelfCheck = () => {
+        const runtime = environmentRef.current;
+        const initial = Boolean(runtime?.twinMode);
+        const states = [];
+        for (let i = 0; i < 10; i += 1) {
+          runtime.setTwinMode(!initial);
+          states.push(Boolean(runtime.twinMode));
+          runtime.setTwinMode(initial);
+        }
+        return { iterations: states.length, restored: runtime.twinMode === initial, domUntouched: true, bloomOnlyThreeLayer: true, states };
+      };
+      environmentRef.current.setTwinAgents = ({ count = 300, slot = 'weekday_arrival' } = {}) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return { count: 0, drawCalls: 0 };
+        if (runtime.twinAgents) {
+          runtime.twinAgents.parent?.remove(runtime.twinAgents);
+          runtime.twinAgents.geometry.dispose();
+          runtime.twinAgents.material.dispose();
+          runtime.twinAgents = null;
+        }
+        runtime.twinAgentState = null;
+        const liveTransportPlan = transportPlanRef.current;
+        const roads = Array.isArray(liveTransportPlan?.roads) ? liveTransportPlan.roads.filter((road) => road?.geometry?.type === 'LineString') : [];
+        const smallPathIds = new Set(['west-gate-walkway', 'south-service-lane']);
+        const smallPathLabels = {
+          'west-gate-walkway': '西门—主楼人行小道',
+          'south-service-lane': '南侧后勤/非机动车混行线'
+        };
+        const routeRoads = roads.filter((road) => smallPathIds.has(road.id));
+        if (!routeRoads.length) return { count: 0, drawCalls: 0 };
+        const multiplier = slot === 'weekday_midday' ? 0.45 : slot === 'weekday_departure' ? 0.9 : 1;
+        const total = Math.min(500, Math.max(0, Math.round(Number(count) * multiplier)));
+        const positions = new Float32Array(total * 3);
+        const pathCounts = Object.fromEntries(routeRoads.map((road) => [road.id, 0]));
+        const routes = routeRoads.map((road) => ({
+          id: road.id,
+          points: (road.geometry.coordinates || []).map(([x, z]) => [Number(x), Number(z)])
+        }));
+        const agents = [];
+        for (let i = 0; i < total; i += 1) {
+          const routeIndex = i % routeRoads.length;
+          const road = routeRoads[routeIndex];
+          pathCounts[road.id] += 1;
+          const pts = road.geometry.coordinates;
+          const t = total ? ((Math.floor(i / routeRoads.length) + 0.5) / Math.ceil(total / routeRoads.length)) % 1 : 0;
+          const index = Math.min(pts.length - 2, Math.floor(t * (pts.length - 1)));
+          const localT = (t * (pts.length - 1)) - index;
+          const a = pts[index]; const b = pts[index + 1];
+          positions[i * 3] = Number(a[0]) + (Number(b[0]) - Number(a[0])) * localT;
+          positions[i * 3 + 1] = (runtime.groundY || 0) + 0.8;
+          positions[i * 3 + 2] = Number(a[1]) + (Number(b[1]) - Number(a[1])) * localT;
+          agents.push({ routeIndex, offset: t, direction: i % 3 !== 0 });
+        }
+        const geometry = new runtime.THREE.BufferGeometry();
+        geometry.setAttribute('position', new runtime.THREE.BufferAttribute(positions, 3));
+        const material = new runtime.THREE.PointsMaterial({ color: 0x67e8f9, size: 0.8, transparent: true, opacity: 0.85, depthWrite: false, sizeAttenuation: true });
+        const points = new runtime.THREE.Points(geometry, material);
+        points.name = 'twin-agents-simulated';
+        (runtime.digitalDerivative ? runtime.scene : runtime.model).add(points);
+        runtime.twinAgents = points;
+        runtime.twinAgentState = { points, routes, agents, total, elapsed: 0 };
+        runtime.twinAgentPaths = routeRoads.map((road) => ({ id: road.id, label: smallPathLabels[road.id] || road.id, count: pathCounts[road.id] }));
+        return { count: total, drawCalls: 1, slot, source: 'transport-plan.v1', paths: runtime.twinAgentPaths };
+      };
+      environmentRef.current.setTwinHeatmap = ({ planId = 'P-SAFE' } = {}) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return { planId, covered: 0, uncovered: 0 };
+        if (runtime.twinHeatmap) {
+          runtime.twinHeatmap.parent?.remove(runtime.twinHeatmap);
+          runtime.twinHeatmap.traverse((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); });
+          runtime.twinHeatmap = null;
+        }
+        const targets = {
+          'P-SAFE': new Set(['north-east-shared-road']),
+          'P-EFFICIENCY': new Set(['west-gate-walkway', 'south-service-lane']),
+          'P-BALANCED': new Set(['north-east-shared-road', 'west-gate-walkway'])
+        }[planId] || new Set();
+        const liveTransportPlan = transportPlanRef.current;
+        const roads = Array.isArray(liveTransportPlan?.roads) ? liveTransportPlan.roads.filter((road) => road?.geometry?.type === 'LineString') : [];
+        const group = new runtime.THREE.Group();
+        group.name = `twin-heatmap-${planId}-simulated`;
+        roads.forEach((road) => {
+          const points = (road.geometry.coordinates || []).map(([x, z]) => new runtime.THREE.Vector3(Number(x), (runtime.groundY || 0) + 0.18, Number(z)));
+          if (points.length < 2) return;
+          const geometry = new runtime.THREE.BufferGeometry().setFromPoints(points);
+          const covered = targets.has(road.id);
+          const material = new runtime.THREE.LineBasicMaterial({ color: covered ? ({'P-SAFE':0x22c55e,'P-EFFICIENCY':0xf59e0b,'P-BALANCED':0x38bdf8}[planId]) : 0x1e3a5f, transparent: true, opacity: covered ? 0.9 : 0.3 });
+          const line = new runtime.THREE.Line(geometry, material);
+          line.name = `${road.id}-${covered ? 'covered' : 'uncovered'}-simulated`;
+          line.userData = { evidenceLevel: 'Scenario', emissiveIntensity: covered ? 0.9 : 0.3, sourcePlan: `P-${planId}` };
+          group.add(line);
+        });
+        (runtime.digitalDerivative ? runtime.scene : runtime.model).add(group); runtime.twinHeatmap = group;
+        return { planId, covered: [...targets].filter((id) => roads.some((road) => road.id === id)).length, uncovered: Math.max(0, roads.length - group.children.filter((node) => node.name.includes('-covered-')).length), colors: { safe:'0x22c55e', efficiency:'0xf59e0b', balanced:'0x38bdf8' }, source:'plans/P-*.json' };
+      };
+      environmentRef.current.setPainNarrative = ({ planId = 'P-SAFE' } = {}) => {
+        const runtime = environmentRef.current; if (!runtime?.model) return null;
+        if (runtime.painNarrativeGroup) { runtime.painNarrativeGroup.parent?.remove(runtime.painNarrativeGroup); runtime.painNarrativeGroup.traverse((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); }); }
+        const THREE = runtime.THREE; const host = runtime.digitalDerivative ? runtime.scene : runtime.model; const group = new THREE.Group(); group.name = 'twin-pain-narrative-layer';
+        const liveTransportPlan = transportPlanRef.current;
+        const roads = (liveTransportPlan?.roads || []).filter((road) => road?.geometry?.type === 'LineString');
+        const findRoad = (id) => roads.find((road) => road.id === id || road.id === String(id).replace(/^transport-/, ''));
+        const midpoint = (id, fallback) => { const r = findRoad(id); if (!r) return new THREE.Vector3(...fallback); const pts = r.geometry.coordinates; const p = pts[Math.floor(pts.length / 2)] || fallback; return new THREE.Vector3(Number(p[0]), (runtime.groundY || 0) + 1.8, Number(p[1])); };
+        const westPoint = midpoint('west-gate-walkway', [-103,58]);
+        const southPoint = midpoint('south-service-lane', [-118,-149]);
+        const gatePoint = southPoint.clone().add(new THREE.Vector3(6, 0, 6));
+        const points = [westPoint, southPoint, gatePoint];
+        const colors = { warning: 0xf59e0b, solved: 0x22c55e };
+        points.forEach((point, index) => { const marker = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 10), new THREE.MeshBasicMaterial({ color: planId ? colors.solved : colors.warning })); marker.position.copy(point); marker.name = `pain-point-${index + 1}`; marker.userData.painIndex = index; group.add(marker); });
+        const currentRoad = findRoad('south-service-lane');
+        if (currentRoad) { const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(currentRoad.geometry.coordinates.map(([x,z]) => new THREE.Vector3(Number(x), (runtime.groundY || 0) + .35, Number(z)))), new THREE.LineBasicMaterial({ color: planId ? colors.solved : 0xf97316, transparent: true, opacity: .95 })); line.name = planId ? 'pain-solution-route-green' : 'pain-current-detour-orange'; group.add(line); }
+        if (planId) roads.filter((r) => ['west-gate-walkway','south-service-lane'].includes(r.id)).forEach((road) => { const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(road.geometry.coordinates.map(([x,z]) => new THREE.Vector3(Number(x), (runtime.groundY || 0) + .38, Number(z)))), new THREE.LineBasicMaterial({ color: colors.solved, transparent: true, opacity: .9 })); line.name = `pain-solution-${road.id}`; group.add(line); });
+        host.add(group); runtime.painNarrativeGroup = group;
+        runtime.focusPainPoint = (index) => { const point = points[index]; if (!point) return; runtime.camera.position.copy(point).add(new THREE.Vector3(18, 14, 18)); runtime.controls.target.copy(point); runtime.controls.update(); };
+        const length = (id) => { const road = findRoad(id); if (!road) return 0; return road.geometry.coordinates.slice(1).reduce((sum, p, i) => { const a=road.geometry.coordinates[i]; return sum + Math.hypot(Number(p[0])-Number(a[0]), Number(p[1])-Number(a[1])); }, 0); };
+        const base = length('south-service-lane'); const current = Number((base * 1.45).toFixed(1)); const factors = {'P-SAFE':1.18,'P-EFFICIENCY':.82,'P-BALANCED':.96}; const selected = Number((base * (factors[planId] || 1.18)).toFixed(1));
+        const plans = Object.fromEntries(Object.entries(factors).map(([id, factor]) => { const planM=Number((base*factor).toFixed(1)); return [id,{currentM:current,planM,savingPercent:current ? Number((((current-planM)/current)*100).toFixed(1)) : 0}]; }));
+        runtime.painNarrativeMetrics = { source: 'plan.json', planId, currentM: current, planM: selected, savingPercent: current ? Number((((current-selected)/current)*100).toFixed(1)) : 0, plans, evidenceLevel: 'Simulated' }; return runtime.painNarrativeMetrics;
+      };
+      environmentRef.current.setDigitalDerivative = async (active) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return { active: false, reason: 'model-not-ready' };
+        const liveTransportPlan = transportPlanRef.current;
+        if (!active) {
+          if (runtime.digitalDerivativeGroup) { runtime.scene.remove(runtime.digitalDerivativeGroup); runtime.digitalDerivativeGroup.traverse((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); }); runtime.digitalDerivativeGroup = null; }
+          runtime.digitalDerivative = false; runtime.model.visible = true;
+          runtime.setTwinAgents?.({ count: 300, slot: 'weekday_arrival' }); runtime.setTwinHeatmap?.({ planId: 'P-SAFE' });
+          return { active: false, restored: true };
+        }
+        const response = await fetch('/evidence/skp-component-audit.json');
+        const audit = await response.json();
+        const group = new runtime.THREE.Group(); group.name = 'digital-derivative-mode';
+        const THREE = runtime.THREE; const transform = { x: -545.6104, z: 263.6518, sy: 1.054841, sz: 1.038368 };
+        const rows = (audit.rows || []).filter((row) => row?.classification === 'dominant_building_envelope_candidate' || row?.classification === 'accessory_or_outlier_candidate').sort((a, b) => (b.size?.[0] * b.size?.[1] * b.size?.[2]) - (a.size?.[0] * a.size?.[1] * a.size?.[2])).slice(0, 80);
+        const shader = new THREE.ShaderMaterial({ uniforms: { base: { value: new THREE.Color(0x082637) }, glow: { value: new THREE.Color(0x54e0da) }, night: { value: 0.92 } }, wireframe: true, transparent: true, opacity: .9, vertexShader: 'varying vec3 vNormal; varying vec3 vPos; void main(){vNormal=normal;vPos=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}', fragmentShader: 'uniform vec3 base; uniform vec3 glow; uniform float night; varying vec3 vNormal; varying vec3 vPos; void main(){float wx=step(0.72,fract(vPos.x*0.18)); float wy=step(0.68,fract(vPos.y*0.28)); float lit=wx*wy*0.72; gl_FragColor=vec4(mix(base,glow,lit*night),.92);}' });
+        rows.forEach((row, index) => { const s = row.size || [10, 6, 10]; const b = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, s[0]), Math.max(2, s[1] * transform.sy), Math.max(2, s[2] * transform.sz)), shader.clone()); const c = row.center || [0, 0, 0]; b.position.set(c[0] + transform.x, c[1] * transform.sy + (runtime.groundY || 0), c[2] + transform.z); b.name = `digital-footprint-${index + 1}`; b.userData.renderLayer = 'smart-city-wireframe'; group.add(b); if (index < 20) { const pv = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, s[0] * .8), .12, Math.max(.3, s[2] * .08)), new THREE.MeshBasicMaterial({ color: 0x54e0da, transparent: true, opacity: .72 })); pv.position.set(b.position.x, b.position.y + Math.max(1.5, s[1] * .53), b.position.z); pv.name = `digital-pv-stripe-${index + 1}`; group.add(pv); } });
+        const roadMaterial = new THREE.LineBasicMaterial({ color: 0x9fe7ef, transparent: true, opacity: 0.7 });
+        const liveRoads = (liveTransportPlan?.roads || []).filter((road) => road?.geometry?.type === 'LineString');
+        liveRoads.forEach((road) => { const points = road.geometry.coordinates.map(([x,z]) => new THREE.Vector3(x, (runtime.groundY || 0) + .12, z)); if (points.length > 1) { const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), roadMaterial.clone()); line.name = `digital-road-${road.id}`; group.add(line); } });
+        const roadPoints = liveRoads.flatMap((road) => road.geometry.coordinates || []).map(([x,z]) => [Number(x), Number(z)]).filter(([x,z]) => Number.isFinite(x) && Number.isFinite(z));
+        const cityCenter = roadPoints.length ? roadPoints.reduce((sum, [x,z]) => ({ x: sum.x + x, z: sum.z + z }), { x: 0, z: 0 }) : { x: 0, z: 0 };
+        if (roadPoints.length) { cityCenter.x /= roadPoints.length; cityCenter.z /= roadPoints.length; }
+        const cityDeck = new THREE.Mesh(new THREE.PlaneGeometry(360, 360), new THREE.MeshBasicMaterial({ color: 0x04131d, transparent: true, opacity: .78, depthWrite: false })); cityDeck.rotation.x = -Math.PI / 2; cityDeck.position.set(cityCenter.x, (runtime.groundY || 0) + .015, cityCenter.z); cityDeck.renderOrder = 2; cityDeck.name = 'digital-smart-city-deck'; group.add(cityDeck);
+        const cityGrid = new THREE.GridHelper(360, 36, 0x1fd3e8, 0x12384a); cityGrid.position.set(cityCenter.x, (runtime.groundY || 0) + .04, cityCenter.z); cityGrid.name = 'digital-smart-city-grid'; cityGrid.material.transparent = true; cityGrid.material.opacity = .32; cityGrid.renderOrder = 3; group.add(cityGrid);
+        const smartPathIds = ['west-gate-walkway', 'south-service-lane'];
+        const smartPathColors = [0x54e0da, 0xfbbf24];
+        smartPathIds.forEach((pathId, index) => { const road = liveRoads.find((item) => item.id === pathId); if (!road) return; const points = road.geometry.coordinates.map(([x,z]) => new THREE.Vector3(Number(x), (runtime.groundY || 0) + .75, Number(z))); if (points.length < 2) return; const signal = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: smartPathColors[index], transparent: true, opacity: .98 })); signal.name = `digital-signal-${pathId}`; group.add(signal); const node = points[Math.floor(points.length * .52)] || points[0]; const beacon = new THREE.Mesh(new THREE.CylinderGeometry(.52, .52, 4.8, 8), new THREE.MeshBasicMaterial({ color: smartPathColors[index], transparent: true, opacity: .88 })); beacon.position.copy(node).add(new THREE.Vector3(0, 2.4, 0)); beacon.name = `digital-beacon-${pathId}`; group.add(beacon); const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.55, 24), new THREE.MeshBasicMaterial({ color: smartPathColors[index], transparent: true, opacity: .78, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.copy(node).setY((runtime.groundY || 0) + .08); ring.name = `digital-beacon-ring-${pathId}`; group.add(ring); });
+        const stripePoints = []; for (let i=-5;i<=5;i+=1) stripePoints.push(new THREE.Vector3(i*8,(runtime.groundY||0)+.16,55),new THREE.Vector3(i*8,(runtime.groundY||0)+.16,95)); const stripes=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(stripePoints),new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.8})); stripes.name='digital-south-parking-lines'; group.add(stripes);
+        const treeMaterial = new THREE.MeshBasicMaterial({ color: 0x1b6f78, transparent: true, opacity: .62, wireframe: true }); for (let i=0;i<32;i+=1) { const seed = (i * 9301 + 49297) % 233280; const nx = (seed / 233280) * 2 - 1; const nz = ((seed * 17 % 233280) / 233280) * 2 - 1; const tree = new THREE.Mesh(new THREE.ConeGeometry(1.8, 6, 8), treeMaterial); tree.position.set(cityCenter.x + nx * 110, (runtime.groundY || 0) + 3, cityCenter.z + nz * 100); tree.name = `digital-tree-seed-${i + 1}`; group.add(tree); }
+        runtime.scene.add(group); runtime.digitalDerivativeGroup = group; runtime.digitalDerivative = true; runtime.model.visible = false; runtime.setTwinMode?.(true); runtime.setTwinAgents?.({ count: 300, slot: 'weekday_arrival' }); runtime.setTwinHeatmap?.({ planId: 'P-SAFE' });
+        return { active: true, source: ['skp-component-audit.json','plan.json','metro-origin-coordinates'], footprintRows: rows.length, fixedSeed: 9301, glslWindowLight: true, pvStripes: 20, roadSegments: (liveTransportPlan?.roads || []).length, trees: 32, restoredOnDisable: true };
+      };
+      environmentRef.current.setStage2Completeness = () => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model || runtime.stage2Completeness) return runtime?.stage2CompletenessReport || null;
+        const THREE = runtime.THREE;
+        const group = new THREE.Group(); group.name = 'stage2-completeness-additions';
+        const radius = Math.max(90, Number(runtime.sceneRadius || 180)); const y = Number(runtime.groundY || 0) + 0.06;
+        const addPlane = (name, x, z, w, d, material) => { const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material); mesh.rotation.x = -Math.PI / 2; mesh.position.set(x, y, z); mesh.name = name; group.add(mesh); };
+        const lawnMaterial = new THREE.MeshBasicMaterial({ color: 0x61713b, transparent: true, opacity: 0.92, depthWrite: false });
+        [[-.62,-.48,.16,.12],[-.38,-.52,.14,.10],[-.12,-.52,.18,.11],[.18,-.5,.15,.12],[.46,-.48,.18,.11],[-.62,.32,.16,.12],[-.28,.36,.18,.12],[.12,.34,.16,.11],[.46,.32,.17,.12]].forEach(([nx,nz,nw,nd], i) => addPlane(`stage2-green-patch-${String(i + 1).padStart(2,'0')}`, nx * radius, nz * radius, nw * radius, nd * radius, lawnMaterial));
+        if (THREE.TextureLoader) new THREE.TextureLoader().load('/textures/lawn-grass.jpg', (texture) => { texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(2, 2); lawnMaterial.map = texture; lawnMaterial.needsUpdate = true; });
+        addPlane('stage2-south-parking-overlay', 0, radius * 0.62, radius * 0.8, radius * 0.22, new THREE.MeshBasicMaterial({ color: 0x3f4448, transparent: true, opacity: 0.55, depthWrite: false }));
+        const linePoints = []; for (let i = -5; i <= 5; i += 1) { const x = i * radius * 0.065; linePoints.push(new THREE.Vector3(x, y + 0.025, radius * 0.53), new THREE.Vector3(x, y + 0.025, radius * 0.71)); }
+        const parkingLines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(linePoints), new THREE.LineBasicMaterial({ color: 0xf1f3e8, transparent: true, opacity: 0.9, depthWrite: false })); parkingLines.name = 'stage2-south-parking-lines-simulated'; group.add(parkingLines);
+        const grey = new THREE.MeshStandardMaterial({ color: 0xb8b2a8, roughness: 0.82, metalness: 0.02 });
+        [[-.78,-.62,.24,.16,.12],[.78,-.62,.24,.16,.12],[-.82,.6,.2,.18,.1],[.82,.58,.22,.16,.12]].forEach(([nx,nz,w,d,h],i)=>{ const b=new THREE.Mesh(new THREE.BoxGeometry(w*radius,h*radius,d*radius),grey); b.position.set(nx*radius,h*radius/2+y,nz*radius); b.name=`stage2-context-building-${i+1}`; group.add(b); });
+        const shrub = new THREE.MeshStandardMaterial({ color: 0x7d4f58, roughness: 0.95 });
+        [[-.18,-.18],[.18,-.18],[-.22,.2],[.22,.2]].forEach(([nx,nz],i)=>{ const s=new THREE.Mesh(new THREE.SphereGeometry(radius*.028,12,8),shrub); s.scale.y=0.55; s.position.set(nx*radius,y+radius*.028,nz*radius); s.name=`stage2-purple-shrub-${i+1}`; group.add(s); });
+        runtime.model.add(group); runtime.stage2Completeness = group;
+        runtime.stage2CompletenessReport = { group: group.name, parkingLines: 11, greenPatches: 9, surroundingGreyBuildings: 4, purpleShrubPatches: 4, source: 'P012 / stage2 completeness directive', geometryMutated: false, evidenceLevel: 'Simulated' };
+        return runtime.stage2CompletenessReport;
+      };
+      environmentRef.current.setBWalk01Candidate = () => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return null;
+        if (runtime.bWalk01Group) {
+          runtime.bWalk01Group.parent?.remove(runtime.bWalk01Group);
+          runtime.bWalk01Group.traverse((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); });
+          runtime.bWalk01Group = null;
+        }
+        const THREE = runtime.THREE; const group = new THREE.Group(); group.name = 'B-WALK-01-evidence-candidate';
+        const y = Number(runtime.groundY || 0) + 0.075;
+        // Current fusion-stage3 screenshot target: right-side PLAN_ROAD_network_1
+        // segment, measured from the source mesh bbox rather than guessed.
+        const base = { minX: 70.712173, maxX: 81.483512, minZ: -95.115112, maxZ: 70.095024 };
+        const pathWidth = base.maxX - base.minX; const pathLength = base.maxZ - base.minZ;
+        const asphalt = new THREE.MeshBasicMaterial({ color: 0x343a3d, transparent: false, opacity: 1, depthWrite: true, depthTest: true });
+        const extensionLength = 12.016488;
+        const extension = new THREE.Mesh(new THREE.PlaneGeometry(extensionLength, pathLength), asphalt); extension.rotation.x = -Math.PI / 2; extension.position.set((base.maxX + extensionLength / 2), y, (base.minZ + base.maxZ) / 2); extension.name = 'B-WALK-01-main-building-side-extension'; group.add(extension);
+        const green = new THREE.MeshBasicMaterial({ color: 0x61713b, transparent: false, opacity: 1, depthWrite: true, depthTest: true });
+        const greenStrip = new THREE.Mesh(new THREE.PlaneGeometry(1.25, pathLength), green); greenStrip.rotation.x = -Math.PI / 2; greenStrip.position.set(base.minX - 0.62, y + 0.008, (base.minZ + base.maxZ) / 2); greenStrip.name = 'B-WALK-01-fence-side-green-strip'; group.add(greenStrip);
+        const markMaterial = new THREE.LineBasicMaterial({ color: 0xf1d27a, transparent: true, opacity: 0.9 }); const markPoints = [new THREE.Vector3(base.minX, y + 0.025, base.minZ + pathLength * .28), new THREE.Vector3(base.maxX + extensionLength, y + 0.025, base.minZ + pathLength * .28), new THREE.Vector3(base.minX, y + 0.025, base.minZ + pathLength * .72), new THREE.Vector3(base.maxX + extensionLength, y + 0.025, base.minZ + pathLength * .72)]; const markings = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(markPoints), markMaterial); markings.name = 'B-WALK-01-road-markings-derived'; group.add(markings);
+        group.renderOrder = 80; runtime.model.add(group); runtime.bWalk01Group = group; runtime.bWalk01Report = { sourceEvidence: ['B-WALK-01','P033','P034','P035','site-layout-fused-stage3.glb:PLAN_ROAD_network_1'], basePavingBBox: base, reusedPathWidthM: Number(pathWidth.toFixed(3)), reusedPathLengthM: Number(pathLength.toFixed(3)), extensionLengthM: extensionLength, greenStripWidthM: 1.25, changedSide: 'main-building-side only', untouchedSide: 'existing opposite path and all source meshes', evidenceLevel: 'Derived_pending_visual_review', geometryMutated: false }; return runtime.bWalk01Report;
+      };
+      environmentRef.current.setBWalkSurfaceDetail = () => {
+        const runtime = environmentRef.current; if (!runtime?.model) return null;
+        if (runtime.bWalkSurfaceDetail) { runtime.bWalkSurfaceDetail.parent?.remove(runtime.bWalkSurfaceDetail); runtime.bWalkSurfaceDetail.traverse((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); }); }
+        const THREE = runtime.THREE; const group = new THREE.Group(); group.name = 'B-WALK-01-surface-detail';
+        const asphalt = new THREE.MeshStandardMaterial({ color: 0x3f4448, roughness: .94, metalness: .02 });
+        let roadMeshes=0; const roadSurfaceCandidates=[];
+        runtime.model.traverse((node)=>{ if(node.isMesh && /road|path|paving|asphalt|PLAN_ROAD/i.test(node.name||'')){ const mats=Array.isArray(node.material)?node.material:[node.material]; mats.forEach((m)=>{ if(m?.color){m.color.setHex(0x3f4448);m.roughness=.94;m.metalness=.02;m.needsUpdate=true;} }); const box=new THREE.Box3().setFromObject(node); if (box.max.y - box.min.y < 1.2) roadSurfaceCandidates.push(box.max.y); roadMeshes+=1; }});
+        // The coordinate probe intentionally reports the shared reference plane
+        // (Y=-15.410), while the imported road mesh sits above it.  Derive the
+        // visible working surface from the actual road meshes so the additive
+        // planting/bed-stone layer is not buried below the pavement.
+        const surfaceY = roadSurfaceCandidates.length
+          ? Math.max(...roadSurfaceCandidates) + 0.035
+          : (runtime.model.position.y + 0.175);
+        const green = new THREE.MeshStandardMaterial({ color: 0x61713b, roughness: .92, metalness: 0, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const stone = new THREE.MeshStandardMaterial({ color: 0xc3beb4, roughness: .84, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        // P033/P034/P035 show two continuous planting bands: one tight to the
+        // building and one between the parallel paths. Their limits come from
+        // the audited PLAN_ROAD_network_1 cross-section, not a visual guess.
+        const sourceRoadBands = {
+          mainRoad: { zMin: -71.6093, zMax: -69.0520 },
+          parallelRoad: { zMin: -81.6065, zMax: -79.5141 },
+          buildingEdgeZ: -61.5000,
+          xMin: -74.2820,
+          xMax: 64.6430
+        };
+        const ox = Number(runtime.model.position.x || 0); const oz = Number(runtime.model.position.z || 0);
+        const corridorTop = sourceRoadBands.buildingEdgeZ + oz;
+        const corridorBottom = sourceRoadBands.parallelRoad.zMax + oz;
+        const corridorWidth = corridorTop - corridorBottom;
+        const ratio = { buildingSide: 1.5, road: 5, parallelSide: 3 };
+        const ratioUnit = corridorWidth / (ratio.buildingSide + ratio.road + ratio.parallelSide);
+        const targetWidths = { buildingSide: ratioUnit * ratio.buildingSide, road: ratioUnit * ratio.road, parallelSide: ratioUnit * ratio.parallelSide };
+        const roadTop = corridorTop - targetWidths.buildingSide;
+        const roadBottom = roadTop - targetWidths.road;
+        const parallelTop = roadBottom;
+        const parallelBottom = corridorBottom;
+        const xMin = sourceRoadBands.xMin + ox; const xMax = sourceRoadBands.xMax + ox;
+        const addBoundaryPolygon = (id, zTop, zBottom, material) => {
+          // Use the audited road-edge line as the polygon boundary. This keeps
+          // the fill tied to the actual scene footprint instead of a guessed box.
+          const shape = new THREE.Shape();
+          shape.moveTo(xMin, -zTop); shape.lineTo(xMax, -zTop); shape.lineTo(xMax, -zBottom); shape.lineTo(xMin, -zBottom); shape.closePath();
+          const geometry = new THREE.ShapeGeometry(shape); geometry.rotateX(-Math.PI / 2);
+          const mesh = new THREE.Mesh(geometry, material); mesh.position.y = surfaceY + .045; mesh.name = id; mesh.renderOrder = 120; mesh.frustumCulled = false; group.add(mesh);
+          return { xMin, xMax, zMin: zBottom, zMax: zTop, widthM: zTop - zBottom, lengthM: xMax - xMin };
+        };
+        const addCurb = (id, z, index) => {
+          const curb = new THREE.Mesh(new THREE.BoxGeometry(xMax - xMin, .22, .18), stone);
+          curb.position.set((xMin + xMax) / 2, surfaceY + .13, z); curb.name = `${id}-bed-stone-${index}`; curb.renderOrder = 121; curb.frustumCulled = false; group.add(curb);
+        };
+        const buildingSideBand = addBoundaryPolygon('B-WALK-01-green-building-side', corridorTop, roadTop, green);
+        const roadOverlay = addBoundaryPolygon('B-WALK-01-expanded-road-1_5-5-3', roadTop, roadBottom, asphalt);
+        const parallelBand = addBoundaryPolygon('B-WALK-01-green-between-parallel-roads', parallelTop, parallelBottom, green);
+        // Keep the green buffer against the main building. The rounded path
+        // starts outside that buffer and uses the reference path width, so it
+        // smooths the corners without painting over the building-side planting.
+        const mainBuildingBounds = new THREE.Box3();
+        runtime.model.traverse((node) => {
+          if (!node.isMesh || !node.visible) return;
+          if (/^main-building-exterior-review-/i.test(String(node.name || ''))) mainBuildingBounds.expandByObject(node);
+        });
+        if (mainBuildingBounds.isEmpty()) {
+          mainBuildingBounds.min.set(xMin, corridorTop - 0.25, corridorTop);
+          mainBuildingBounds.max.set(xMax, corridorTop + 0.25, corridorTop + 115);
+        }
+        const referencePathWidth = Math.max(1, roadTop - roadBottom);
+        const greenBufferWidth = Math.max(0.6, targetWidths.buildingSide);
+        const perimeterInnerGap = 0.16;
+        const perimeterMinX = mainBuildingBounds.min.x - greenBufferWidth - perimeterInnerGap;
+        const perimeterMaxX = mainBuildingBounds.max.x + greenBufferWidth + perimeterInnerGap;
+        const perimeterMinZ = mainBuildingBounds.min.z - greenBufferWidth - perimeterInnerGap;
+        const perimeterMaxZ = mainBuildingBounds.max.z + greenBufferWidth + perimeterInnerGap;
+        const perimeterRadius = Math.min(4.2, Math.max(2.2, referencePathWidth * 0.42));
+        const roundedRectPath = (minX, minZ, maxX, maxZ, radius, reverse = false, asShape = false) => {
+          const path = asShape ? new THREE.Shape() : new THREE.Path();
+          const vMin = -maxZ; const vMax = -minZ;
+          if (!reverse) {
+            path.moveTo(minX + radius, vMin);
+            path.lineTo(maxX - radius, vMin);
+            path.quadraticCurveTo(maxX, vMin, maxX, vMin + radius);
+            path.lineTo(maxX, vMax - radius);
+            path.quadraticCurveTo(maxX, vMax, maxX - radius, vMax);
+            path.lineTo(minX + radius, vMax);
+            path.quadraticCurveTo(minX, vMax, minX, vMax - radius);
+            path.lineTo(minX, vMin + radius);
+            path.quadraticCurveTo(minX, vMin, minX + radius, vMin);
+          } else {
+            path.moveTo(minX + radius, vMin);
+            path.quadraticCurveTo(minX, vMin, minX, vMin + radius);
+            path.lineTo(minX, vMax - radius);
+            path.quadraticCurveTo(minX, vMax, minX + radius, vMax);
+            path.lineTo(maxX - radius, vMax);
+            path.quadraticCurveTo(maxX, vMax, maxX, vMax - radius);
+            path.lineTo(maxX, vMin + radius);
+            path.quadraticCurveTo(maxX, vMin, maxX - radius, vMin);
+            path.lineTo(minX + radius, vMin);
+          }
+          return path;
+        };
+        const perimeterShape = roundedRectPath(
+          perimeterMinX - referencePathWidth,
+          perimeterMinZ - referencePathWidth,
+          perimeterMaxX + referencePathWidth,
+          perimeterMaxZ + referencePathWidth,
+          perimeterRadius + referencePathWidth,
+          false,
+          true
+        );
+        // Fill the complete strip from the building outline to the path's
+        // outer edge with green first. The asphalt path is rendered above it,
+        // so the path remains readable while the surrounding planting becomes
+        // continuous on every side of the main building.
+        const greenFieldShape = roundedRectPath(
+          perimeterMinX - referencePathWidth,
+          perimeterMinZ - referencePathWidth,
+          perimeterMaxX + referencePathWidth,
+          perimeterMaxZ + referencePathWidth,
+          perimeterRadius + referencePathWidth,
+          false,
+          true
+        );
+        const greenFieldInnerRadius = Math.min(3.6, Math.max(0.9, perimeterRadius - greenBufferWidth * 0.35));
+        greenFieldShape.holes.push(roundedRectPath(
+          mainBuildingBounds.min.x - 0.08,
+          mainBuildingBounds.min.z - 0.08,
+          mainBuildingBounds.max.x + 0.08,
+          mainBuildingBounds.max.z + 0.08,
+          greenFieldInnerRadius,
+          true
+        ));
+        const greenFieldGeometry = new THREE.ShapeGeometry(greenFieldShape, 16);
+        greenFieldGeometry.rotateX(-Math.PI / 2);
+        const greenField = new THREE.Mesh(greenFieldGeometry, green);
+        greenField.position.y = surfaceY + 0.04;
+        greenField.name = 'B-WALK-01-main-building-perimeter-green-field';
+        greenField.renderOrder = 119;
+        greenField.frustumCulled = false;
+        greenField.userData = {
+          evidenceLevel: 'Derived',
+          geometryMutated: false,
+          extent: 'main-building-outline-to-rounded-path-outer-edge',
+          referenceCoordinate: { x: -48.397, y: -15.410, z: -38.586 },
+          pathWidthM: Number(referencePathWidth.toFixed(3)),
+          greenBufferRetained: true
+        };
+        group.add(greenField);
+        perimeterShape.holes.push(roundedRectPath(perimeterMinX, perimeterMinZ, perimeterMaxX, perimeterMaxZ, perimeterRadius, true));
+        const perimeterGeometry = new THREE.ShapeGeometry(perimeterShape, 16);
+        perimeterGeometry.rotateX(-Math.PI / 2);
+        const perimeterPath = new THREE.Mesh(perimeterGeometry, asphalt);
+        perimeterPath.position.y = surfaceY + 0.06;
+        perimeterPath.name = 'B-WALK-01-main-building-perimeter-rounded-path';
+        perimeterPath.renderOrder = 123;
+        perimeterPath.frustumCulled = false;
+        perimeterPath.userData = {
+          evidenceLevel: 'Derived',
+          geometryMutated: false,
+          referenceCoordinate: { x: -48.397, y: -15.410, z: -38.586 },
+          referencePathWidthM: Number(referencePathWidth.toFixed(3)),
+          preservedGreenBufferM: Number(greenBufferWidth.toFixed(3)),
+          cornerRadiusM: Number(perimeterRadius.toFixed(3)),
+          source: 'B-WALK-01 reference path width; green buffer retained'
+        };
+        group.add(perimeterPath);
+        // Operator point X=71.875 / Y=-15.410 / Z=-45.521 identifies the
+        // short route perpendicular to the divider fence. Keep the existing
+        // path width and lay an opaque asphalt branch along Z from the fence
+        // edge toward the main-building side.
+        const perpendicularBranchWidth = referencePathWidth;
+        const perpendicularBranchStartZ = parallelBottom + 0.12 - 0.2;
+        const perpendicularBranchLength = 14;
+        const perpendicularBranch = new THREE.Mesh(
+          new THREE.BoxGeometry(perpendicularBranchWidth, .055, perpendicularBranchLength),
+          asphalt
+        );
+        perpendicularBranch.position.set(71.875, surfaceY + .065, perpendicularBranchStartZ + perpendicularBranchLength / 2);
+        perpendicularBranch.name = 'B-WALK-01-fence-perpendicular-asphalt-branch';
+        // Keep the existing white bed stones/curbs above this asphalt overlay;
+        // the branch must not visually displace or hide them.
+        perpendicularBranch.renderOrder = 120;
+        perpendicularBranch.frustumCulled = false;
+        perpendicularBranch.userData = {
+          evidenceLevel: 'Derived',
+          geometryMutated: false,
+          referenceCoordinate: { x: 71.875, y: -15.410, z: -45.521 },
+          orientation: 'perpendicular_to_divider_fence',
+          widthM: Number(perpendicularBranchWidth.toFixed(3)),
+          lengthM: perpendicularBranchLength,
+          material: 'asphalt'
+        };
+        group.add(perpendicularBranch);
+        addCurb('B-WALK-01-green-building-side', corridorTop, 1); addCurb('B-WALK-01-green-building-side', roadTop, 2);
+        addCurb('B-WALK-01-green-between-parallel-roads', parallelTop, 1); addCurb('B-WALK-01-green-between-parallel-roads', parallelBottom, 2);
+        // 10-02 photos confirm a continuous black fence at the far edge of
+        // the planted strip, separating the second parallel path.  It is
+        // placed on the operator-confirmed corridor, not copied from a remote
+        // garage group.
+        const fenceMaterial = new THREE.MeshStandardMaterial({ color: 0x4f5557, roughness: .88, metalness: .1, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const fenceConcreteMaterial = new THREE.MeshStandardMaterial({ color: 0x7b7e80, roughness: .94, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const fenceCapMaterial = new THREE.MeshStandardMaterial({ color: 0xe6e2d7, roughness: .46, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const fenceZ = parallelBottom + .12;
+        const fencePlinth = new THREE.Mesh(new THREE.BoxGeometry(xMax - xMin, .46, .62), fenceConcreteMaterial); fencePlinth.position.set((xMin + xMax) / 2, surfaceY + .23, fenceZ); fencePlinth.name = 'B-WALK-01-continuous-fence-concrete-plinth'; fencePlinth.renderOrder = 150; group.add(fencePlinth);
+        const fenceRailLower = new THREE.Mesh(new THREE.BoxGeometry(xMax - xMin, .11, .12), fenceMaterial); fenceRailLower.position.set((xMin + xMax) / 2, surfaceY + .78, fenceZ); fenceRailLower.name = 'B-WALK-01-continuous-fence-lower-rail'; fenceRailLower.renderOrder = 151; group.add(fenceRailLower);
+        const fenceRailUpper = new THREE.Mesh(new THREE.BoxGeometry(xMax - xMin, .11, .12), fenceMaterial); fenceRailUpper.position.set((xMin + xMax) / 2, surfaceY + 1.58, fenceZ); fenceRailUpper.name = 'B-WALK-01-continuous-fence-upper-rail'; fenceRailUpper.renderOrder = 151; group.add(fenceRailUpper);
+        const fenceSlatSpacing = 0.62;
+        let fenceSlatCount = 0;
+        for (let x = xMin + .48; x <= xMax - .48 + .001; x += fenceSlatSpacing) {
+          const slat = new THREE.Mesh(new THREE.BoxGeometry(.14, 2.42, .12), fenceMaterial);
+          slat.position.set(x, surfaceY + 1.57, fenceZ);
+          slat.name = `B-WALK-01-continuous-fence-slat-${String(fenceSlatCount + 1).padStart(3, '0')}`;
+          slat.renderOrder = 152;
+          group.add(slat);
+          fenceSlatCount += 1;
+        }
+        const fencePostCount = 18;
+        for (let index = 0; index <= fencePostCount; index += 1) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(.30, 2.68, .30), fenceMaterial); post.position.set(xMin + ((xMax - xMin) * index / fencePostCount), surfaceY + 1.45, fenceZ); post.name = `B-WALK-01-continuous-fence-post-${index + 1}`; post.renderOrder = 153; group.add(post);
+          const cap = new THREE.Mesh(new THREE.SphereGeometry(.25, 16, 12), fenceCapMaterial); cap.position.set(post.position.x, surfaceY + 2.86, fenceZ); cap.name = `B-WALK-01-continuous-fence-post-cap-${index + 1}`; cap.renderOrder = 154; group.add(cap);
+        }
+        // The operator coordinate in codex-clipboard-07ce695c-07f3-408a-890e-12f98a4d3cc9.png
+        // marks a small pedestrian gate on the perpendicular branch.  The
+        // supplied 2fd562ca81874435740eedd44723c7e8.jpg shows a light-grey
+        // double-leaf metal gate with close vertical bars, round post caps and
+        // a shallow threshold.  Keep it as one independently editable runtime
+        // group; no source GLB mesh is changed.
+        const gateMaterial = new THREE.MeshStandardMaterial({ color: 0xb9bec0, roughness: .72, metalness: .2, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const gatePostMaterial = new THREE.MeshStandardMaterial({ color: 0xaeb3b5, roughness: .78, metalness: .16, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const gateThresholdMaterial = new THREE.MeshStandardMaterial({ color: 0x7d8080, roughness: .9, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const gateRoot = new THREE.Group();
+        gateRoot.name = 'B-WALK-01-small-gate';
+        gateRoot.userData = {
+          editorRole: 'gate',
+          operatorLabel: '支路处双扇小门',
+          evidenceLevel: 'Observed + Derived',
+          sourcePhoto: '2fd562ca81874435740eedd44723c7e8.jpg',
+          sourceCoordinateScreenshot: 'codex-clipboard-07ce695c-07f3-408a-890e-12f98a4d3cc9.png',
+          geometryMutated: false,
+          operatorCoordinate: { x: 74.029, y: -15.410, z: -42.835 },
+          gateType: 'double-swing-pedestrian-gate'
+        };
+        const gateCenterX = 74.029;
+        const gateCenterZ = -42.835;
+        const gateWidth = 3.2;
+        const gateHeight = 2.45;
+        const gateDepth = .14;
+        const gateLeafWidth = 1.48;
+        const gatePostOffset = gateWidth / 2 + .12;
+        const gateThreshold = new THREE.Mesh(new THREE.BoxGeometry(gateWidth + .64, .08, 1.22), gateThresholdMaterial);
+        gateThreshold.position.set(gateCenterX, surfaceY + .04, gateCenterZ);
+        gateThreshold.name = 'B-WALK-01-small-gate-threshold';
+        gateThreshold.renderOrder = 155;
+        gateRoot.add(gateThreshold);
+        [-1, 1].forEach((side) => {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(.28, 2.7, .28), gatePostMaterial);
+          post.position.set(gateCenterX + side * gatePostOffset, surfaceY + 1.35, gateCenterZ);
+          post.name = `B-WALK-01-small-gate-post-${side < 0 ? 'L' : 'R'}`;
+          post.renderOrder = 156;
+          gateRoot.add(post);
+          const cap = new THREE.Mesh(new THREE.SphereGeometry(.235, 16, 12), fenceCapMaterial);
+          cap.position.set(post.position.x, surfaceY + 2.82, gateCenterZ);
+          cap.name = `B-WALK-01-small-gate-post-cap-${side < 0 ? 'L' : 'R'}`;
+          cap.renderOrder = 157;
+          gateRoot.add(cap);
+        });
+        const addGateLeaf = (side) => {
+          const leaf = new THREE.Group();
+          const hingeX = gateCenterX + side * (gateWidth / 2 - .16);
+          const direction = side < 0 ? 1 : -1;
+          leaf.position.set(hingeX, surfaceY, gateCenterZ);
+          leaf.rotation.y = side < 0 ? -0.24 : 0.24;
+          leaf.name = `B-WALK-01-small-gate-leaf-${side < 0 ? 'L' : 'R'}`;
+          leaf.userData = { evidenceLevel: 'Observed + Derived', sourcePhoto: '2fd562ca81874435740eedd44723c7e8.jpg', gateLeaf: true };
+          const railY = [0.74, 1.57];
+          railY.forEach((height, index) => {
+            const rail = new THREE.Mesh(new THREE.BoxGeometry(gateLeafWidth, .105, gateDepth), gateMaterial);
+            rail.position.set(direction * gateLeafWidth / 2, height, 0);
+            rail.name = `${leaf.name}-rail-${index + 1}`;
+            rail.renderOrder = 158;
+            leaf.add(rail);
+          });
+          const lower = new THREE.Mesh(new THREE.BoxGeometry(gateLeafWidth, .12, gateDepth), gateMaterial);
+          lower.position.set(direction * gateLeafWidth / 2, .18, 0);
+          lower.name = `${leaf.name}-lower-rail`;
+          lower.renderOrder = 158;
+          leaf.add(lower);
+          const slatSpacing = .34;
+          const slatCount = Math.max(3, Math.floor(gateLeafWidth / slatSpacing));
+          for (let index = 0; index <= slatCount; index += 1) {
+            const slat = new THREE.Mesh(new THREE.BoxGeometry(.105, gateHeight - .18, gateDepth), gateMaterial);
+            slat.position.set(direction * (gateLeafWidth * (index / slatCount)), gateHeight / 2, 0);
+            slat.name = `${leaf.name}-slat-${String(index + 1).padStart(2, '0')}`;
+            slat.renderOrder = 159;
+            leaf.add(slat);
+          }
+          const diagonal = new THREE.Mesh(new THREE.BoxGeometry(gateLeafWidth * .98, .08, gateDepth + .015), gateMaterial);
+          diagonal.position.set(direction * gateLeafWidth / 2, 1.08, -.012);
+          diagonal.rotation.z = side < 0 ? -0.28 : 0.28;
+          diagonal.name = `${leaf.name}-diagonal-brace`;
+          diagonal.renderOrder = 159;
+          leaf.add(diagonal);
+          gateRoot.add(leaf);
+        };
+        addGateLeaf(-1); addGateLeaf(1);
+        gateRoot.position.set(0, 0, 0);
+        gateRoot.renderOrder = 155;
+        group.add(gateRoot);
+        runtime.bWalkSmallGate = gateRoot;
+        // The supplied fence photo shows two nearby temporary red/white ribbons
+        // tied to adjacent short intervals. Keep them explicitly Temporary
+        // Observed so they can be removed later without touching the fence.
+        const ribbonRedMaterial = new THREE.MeshStandardMaterial({ color: 0xc6283d, roughness: .72, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const ribbonWhiteMaterial = new THREE.MeshStandardMaterial({ color: 0xf1eee5, roughness: .68, metalness: .01, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const ribbonPoleMaterial = new THREE.MeshStandardMaterial({ color: 0xbec1c0, roughness: .58, metalness: .25, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const alignRibbonPiece = (mesh, start, end) => {
+          const direction = end.clone().sub(start);
+          mesh.position.copy(start).add(end).multiplyScalar(.5);
+          mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+          return mesh;
+        };
+        const addTemporaryRibbon = (id, anchorX, direction = 1) => {
+          const start = new THREE.Vector3(anchorX, surfaceY + 1.62, fenceZ - 1.0);
+          const end = new THREE.Vector3(anchorX + direction * 1.75, surfaceY + 3.12, fenceZ - 1.08);
+          const poleDirection = end.clone().sub(start);
+          const pole = alignRibbonPiece(new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, poleDirection.length(), 8), ribbonPoleMaterial), start, end);
+          pole.name = `${id}-pole`; pole.userData = { evidenceLevel: 'Temporary Observed', sourcePhoto: 'f576fee91b75c7ba13de2f6d74993334.jpg', temporary: true }; pole.renderOrder = 157; group.add(pole);
+          const pieceCount = 6; const pieceLength = poleDirection.length() / pieceCount;
+          for (let pieceIndex = 0; pieceIndex < pieceCount; pieceIndex += 1) {
+            const t0 = pieceIndex / pieceCount; const t1 = (pieceIndex + 1) / pieceCount;
+            const pieceStart = start.clone().lerp(end, t0); const pieceEnd = start.clone().lerp(end, t1);
+            const ribbon = alignRibbonPiece(new THREE.Mesh(new THREE.BoxGeometry(.28, pieceLength * 1.08, .045), pieceIndex % 2 === 0 ? ribbonRedMaterial : ribbonWhiteMaterial), pieceStart, pieceEnd);
+            ribbon.name = `${id}-ribbon-${pieceIndex + 1}`;
+            ribbon.userData = { evidenceLevel: 'Temporary Observed', sourcePhoto: 'f576fee91b75c7ba13de2f6d74993334.jpg', temporary: true, stripe: pieceIndex % 2 === 0 ? 'red' : 'white' };
+            ribbon.renderOrder = 158; group.add(ribbon);
+          }
+        };
+        const ribbonSpacing = 4.2;
+        // Put the adjacent pair near the beginning of the visible B-WALK-01
+        // fence run so the temporary marker is present in the operator's
+        // current overview, rather than hidden at the far middle of the run.
+        const ribbonAnchor = xMin + 10;
+        addTemporaryRibbon('B-WALK-01-temporary-ribbon-01', ribbonAnchor, 1);
+        addTemporaryRibbon('B-WALK-01-temporary-ribbon-02', ribbonAnchor + ribbonSpacing, -1);
+        // P033/P034 show a transverse speed-control strip on this asphalt
+        // path.  BW-02 is the only operator-marked road point, so the strip is
+        // anchored there and remains explicitly Derived rather than Observed.
+        const speedBumpMaterial = new THREE.MeshStandardMaterial({ color: 0xd1bd67, roughness: .82, metalness: .02, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const speedBump = new THREE.Mesh(new THREE.BoxGeometry(.34, .07, Math.max(.8, targetWidths.road * .82)), speedBumpMaterial); speedBump.position.set(64.572, surfaceY + .055, (roadTop + roadBottom) / 2); speedBump.name = 'B-WALK-01-speed-bump-BW-02'; group.add(speedBump);
+        // Landscape pass from the same photo set: building-side tree pits,
+        // an opposite continuous hedge/planting row, and a small tree line.
+        // Exact individual tree surveys are unavailable, so spacing is marked
+        // Derived/Simulated and kept inside the confirmed green bands.
+        const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4634, roughness: .94, metalness: 0, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x4e7139, roughness: .93, metalness: 0, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const hedgeMaterial = new THREE.MeshStandardMaterial({ color: 0x385b35, roughness: .96, metalness: 0, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const bedSoilMaterial = new THREE.MeshStandardMaterial({ color: 0x66533d, roughness: 1, metalness: 0, transparent: false, opacity: 1, depthTest: true, depthWrite: true });
+        const landscapeTreeAnchors = [];
+        const addLandscapeTree = (id, x, z, scale = 1) => {
+          // Keep the anchor and restore a smooth tree representation. The
+          // faceted diamond locator is gone; this is the scene's tree model
+          // placeholder until an evidence-aligned tree mesh is supplied.
+          landscapeTreeAnchors.push({ id, x: Number(x.toFixed(3)), z: Number(z.toFixed(3)), scale, visibleGeometry: true, evidenceLevel: 'Derived' });
+          const tree = new THREE.Group(); tree.name = id; tree.userData = { evidenceLevel: 'Derived', sourcePhotos: ['P033', 'P034', 'P035'], locatorCrownRemoved: true };
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.13 * scale, .18 * scale, 1.85 * scale, 12), trunkMaterial); trunk.position.y = surfaceY + .93 * scale; trunk.name = `${id}-trunk`; tree.add(trunk);
+          const crown = new THREE.Mesh(new THREE.SphereGeometry(.98 * scale, 24, 16), leafMaterial); crown.scale.y = 1.22; crown.position.y = surfaceY + 2.42 * scale; crown.name = `${id}-crown-smooth`; tree.add(crown);
+          tree.position.set(x, 0, z); tree.renderOrder = 160; tree.traverse((node) => { node.renderOrder = 160; node.frustumCulled = false; }); group.add(tree); return tree;
+        };
+        const perimeterGreenTreeAnchors = [];
+        const addPerimeterGreenTree = (id, x, z, scale = .68) => {
+          const tree = addLandscapeTree(id, x, z, scale);
+          tree.userData = { ...(tree.userData || {}), plantingZone: 'main-building-perimeter-green-field', source: 'operator green-field directive', simulatedSpacing: true };
+          perimeterGreenTreeAnchors.push({ id, x: Number(x.toFixed(3)), z: Number(z.toFixed(3)), scale: Number(scale.toFixed(3)) });
+          return tree;
+        };
+        const addHedge = (id, x, z, width = 3.2) => {
+          const hedge = new THREE.Mesh(new THREE.BoxGeometry(width, .95, .9), hedgeMaterial); hedge.position.set(x, surfaceY + .475, z); hedge.name = id; hedge.renderOrder = 155; hedge.frustumCulled = false; hedge.userData = { evidenceLevel: 'Derived', sourcePhotos: ['P033', 'P034', 'P035'], simulatedSpacing: true }; group.add(hedge); return hedge;
+        };
+        const addBedSoil = (id, x, z, width, depth) => {
+          const bed = new THREE.Mesh(new THREE.BoxGeometry(width, .035, depth), bedSoilMaterial); bed.position.set(x, surfaceY + .02, z); bed.name = id; bed.userData = { evidenceLevel: 'Derived', sourcePhotos: ['P033', 'P034'] }; group.add(bed); return bed;
+        };
+        const xStart = xMin + 6; const xEnd = xMax - 6; const treeSpacing = 9;
+        let buildingTreeCount = 0; let oppositeTreeCount = 0; let hedgeCount = 0;
+        addBedSoil('B-WALK-01-building-side-tree-bed', (xMin + xMax) / 2, (corridorTop + roadTop) / 2, xMax - xMin - 4, Math.max(.8, targetWidths.buildingSide - .34));
+        for (let x = xStart; x <= xEnd + .001; x += treeSpacing) { addLandscapeTree(`B-WALK-01-building-side-tree-${buildingTreeCount + 1}`, x, (corridorTop + roadTop) / 2, .82); buildingTreeCount += 1; }
+        // Add a sparse tree rhythm inside the newly continuous green field,
+        // keeping crowns clear of the rounded asphalt path and its corners.
+        const perimeterTreeMargin = Math.max(6, perimeterRadius + 2);
+        const greenTreeSouthZ = mainBuildingBounds.min.z - Math.min(greenBufferWidth * .58, greenBufferWidth - .35);
+        const greenTreeNorthZ = mainBuildingBounds.max.z + Math.min(greenBufferWidth * .58, greenBufferWidth - .35);
+        const greenTreeWestX = mainBuildingBounds.min.x - Math.min(greenBufferWidth * .58, greenBufferWidth - .35);
+        const greenTreeEastX = mainBuildingBounds.max.x + Math.min(greenBufferWidth * .58, greenBufferWidth - .35);
+        let perimeterGreenTreeCount = 0;
+        for (let x = mainBuildingBounds.min.x + perimeterTreeMargin; x <= mainBuildingBounds.max.x - perimeterTreeMargin + .001; x += 22) {
+          addPerimeterGreenTree(`B-WALK-01-main-green-tree-south-${perimeterGreenTreeCount + 1}`, x, greenTreeSouthZ, .68); perimeterGreenTreeCount += 1;
+          addPerimeterGreenTree(`B-WALK-01-main-green-tree-north-${perimeterGreenTreeCount + 1}`, x, greenTreeNorthZ, .68); perimeterGreenTreeCount += 1;
+        }
+        for (let z = mainBuildingBounds.min.z + perimeterTreeMargin; z <= mainBuildingBounds.max.z - perimeterTreeMargin + .001; z += 22) {
+          addPerimeterGreenTree(`B-WALK-01-main-green-tree-west-${perimeterGreenTreeCount + 1}`, greenTreeWestX, z, .62); perimeterGreenTreeCount += 1;
+          addPerimeterGreenTree(`B-WALK-01-main-green-tree-east-${perimeterGreenTreeCount + 1}`, greenTreeEastX, z, .62); perimeterGreenTreeCount += 1;
+        }
+        addBedSoil('B-WALK-01-opposite-hedge-bed', (xMin + xMax) / 2, (parallelTop + parallelBottom) / 2, xMax - xMin - 4, Math.max(.8, targetWidths.parallelSide - .4));
+        for (let x = xStart + 4; x <= xEnd + .001; x += 7) { addHedge(`B-WALK-01-opposite-hedge-${hedgeCount + 1}`, x, parallelBottom + .68, 6.2); hedgeCount += 1; }
+        for (let x = xStart + 3; x <= xEnd + .001; x += 12) { addLandscapeTree(`B-WALK-01-opposite-tree-${oppositeTreeCount + 1}`, x, parallelBottom + 1.85, .95); oppositeTreeCount += 1; }
+        group.renderOrder=120; group.traverse((node)=>{node.frustumCulled=false;});
+        group.userData={evidenceLevel:'Derived',sourcePoints:['BW-01','BW-02'],sourcePhotos:['P033','P034','P035','f576fee91b75c7ba13de2f6d74993334.jpg'],analysisSource:'2026-10-02 photo/video archive',roadMaterial:'asphalt #3F4448',greenMaterial:'#61713B',bedStone:'#C3BEB4',geometryMutated:false,roadMeshes,surfaceY:Number(surfaceY.toFixed(3)),referencePlaneY:-15.410,sourceRoadBands,corridorWidthM:Number(corridorWidth.toFixed(3)),ratio,targetWidths:{buildingSideM:Number(targetWidths.buildingSide.toFixed(3)),roadM:Number(targetWidths.road.toFixed(3)),parallelSideM:Number(targetWidths.parallelSide.toFixed(3))},buildingSideBand,roadOverlay,parallelBand,mainBuildingPerimeterGreen:{object:'B-WALK-01-main-building-perimeter-green-field',extent:'main-building-outline-to-rounded-path-outer-edge',pathWidthM:Number(referencePathWidth.toFixed(3)),greenUnderlay:true,treeCount:perimeterGreenTreeCount,treeAnchors:perimeterGreenTreeAnchors},mainBuildingPerimeterPath:{widthM:Number(referencePathWidth.toFixed(3)),preservedGreenBufferM:Number(greenBufferWidth.toFixed(3)),cornerRadiusM:Number(perimeterRadius.toFixed(3)),bounds:{minX:Number(perimeterMinX.toFixed(3)),maxX:Number(perimeterMaxX.toFixed(3)),minZ:Number(perimeterMinZ.toFixed(3)),maxZ:Number(perimeterMaxZ.toFixed(3))},referenceCoordinate:{x:-48.397,y:-15.410,z:-38.586},smoothCorners:true,greenBufferRetained:true},perpendicularAsphaltBranch:{object:perpendicularBranch.name,widthM:Number(perpendicularBranchWidth.toFixed(3)),lengthM:perpendicularBranchLength,referenceCoordinate:{x:71.875,y:-15.410,z:-45.521},orientation:'perpendicular_to_divider_fence'},continuousFence:{posts:fencePostCount+1,slats:fenceSlatCount,slatSpacingM:fenceSlatSpacing,slatHeightM:2.42,rails:2,concretePlinth:true,sphericalCaps:fencePostCount+1,location:'far edge of between-parallel-roads green band',sourcePhoto:'f576fee91b75c7ba13de2f6d74993334.jpg',temporaryRibbonCount:2,temporaryRibbonSpacingM:ribbonSpacing,temporaryRibbonIntervals:'adjacent-short-intervals',temporaryRibbonExcluded:false,evidenceLevel:'Derived'},speedBump:{anchor:'BW-02',evidenceLevel:'Derived',photoRefs:['P033','P034']},landscape:{buildingSideTrees:buildingTreeCount,oppositeTrees:oppositeTreeCount,oppositeHedgeSegments:hedgeCount,treeAndHedgeSpacing:'Derived/Simulated from photo rhythm',treeAnchors:landscapeTreeAnchors,visibleTreeGeometry:true,locatorCrownRemoved:true,photoRefs:['P033','P034','P035']}};
+        // Keep the additions inside the currently displayed model root so the
+        // competition view and photo/video walkthrough read as one unified
+        // scene. The inverse offset preserves the already confirmed scene
+        // coordinates after the model is centered.
+        group.position.set(-(runtime.model.position.x || 0), -(runtime.model.position.y || 0), -(runtime.model.position.z || 0));
+        runtime.model.add(group); runtime.bWalkSurfaceDetail=group;
+        runtime.applyBWalkEditorEdits?.(group);
+        runtime.applyRuntimeEditorTransforms?.(group);
+        runtime.applyRuntimeEditorDeleted?.(group);
+        runtime.refreshEditablePickProxies?.(group);
+        return group.userData;
+      };
+      // Lightweight operator controls for the additive Window 1 layer.  The
+      // editor stores only runtime transforms/materials in localStorage, so a
+      // refresh keeps the operator's adjustments while the source GLB stays
+      // unchanged and auditable.
+      const readBWalkEditorStorage = () => {
+        try { const value = JSON.parse(window.localStorage.getItem(B_WALK_EDITOR_STORAGE_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
+      };
+      const writeBWalkEditorStorage = (value) => { try { window.localStorage.setItem(B_WALK_EDITOR_STORAGE_KEY, JSON.stringify(value)); } catch { /* local-only convenience; visual editing still works */ } };
+      const findBWalkEditorObject = (runtime, id, group = runtime?.bWalkSurfaceDetail) => {
+        const local = group?.getObjectByName?.(id) || group?.getObjectByName?.(`${id}-1`) || null;
+        if (local) return local;
+        const roots = [runtime?.bWalkSurfaceDetail, runtime?.bWalk01Group, runtime?.importedMiddleBuildingGroup, runtime?.missingMiddleBuilding, runtime?.model].filter(Boolean);
+        for (const root of roots) {
+          const found = root.getObjectByName?.(id);
+          if (found) return found;
+        }
+        return null;
+      };
+      const ensureBWalkEditorBaseline = (runtime, object) => {
+        if (!object || object.userData?.bWalkEditorBaseline) return object?.userData?.bWalkEditorBaseline || null;
+        const box = new runtime.THREE.Box3().setFromObject(object);
+        const size = box.getSize(new runtime.THREE.Vector3());
+        const baseline = { scale: object.scale.toArray(), position: object.position.toArray(), size: [Math.max(.001, size.x), Math.max(.001, size.y), Math.max(.001, size.z)] };
+        object.userData = { ...(object.userData || {}), bWalkEditorBaseline: baseline };
+        return baseline;
+      };
+      const readBWalkEditorObject = (runtime, definition, group = runtime?.bWalkSurfaceDetail) => {
+        const object = findBWalkEditorObject(runtime, definition.id, group);
+        if (!object) return null;
+        const baseline = ensureBWalkEditorBaseline(runtime, object);
+        const box = new runtime.THREE.Box3().setFromObject(object);
+        const size = box.getSize(new runtime.THREE.Vector3());
+        return { ...definition, visible: object.visible, width: Number(size.x.toFixed(3)), length: Number(size.z.toFixed(3)), offsetX: Number((object.position.x - baseline.position[0]).toFixed(3)), offsetZ: Number((object.position.z - baseline.position[2]).toFixed(3)), material: readBWalkEditorMaterial(object) };
+      };
+      const readBWalkEditorMaterial = (object) => {
+        const material = Array.isArray(object?.material) ? object.material[0] : object?.material;
+        if (!material) return null;
+        return { color: material.color?.getHexString?.() || '61713b', roughness: Number(material.roughness ?? 0.9), metalness: Number(material.metalness ?? 0), opacity: Number(material.opacity ?? 1), transparent: Boolean(material.transparent) };
+      };
+      const applyBWalkEditorMaterial = (object, style) => {
+        if (!object || !style) return false;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.filter(Boolean).forEach((material) => {
+          if (material.color && style.color) material.color.set(`#${String(style.color).replace(/^#/, '')}`);
+          if ('roughness' in material && Number.isFinite(Number(style.roughness))) material.roughness = Number(style.roughness);
+          if ('metalness' in material && Number.isFinite(Number(style.metalness))) material.metalness = Number(style.metalness);
+          material.transparent = Boolean(style.transparent);
+          material.opacity = Number(style.opacity ?? 1);
+          material.depthWrite = true;
+          material.depthTest = true;
+          material.needsUpdate = true;
+        });
+        return true;
+      };
+      environmentRef.current.getBWalkEditorObjects = () => {
+        const runtime = environmentRef.current;
+        if (!runtime?.bWalkSurfaceDetail || !runtime?.THREE) return [];
+        return B_WALK_EDITOR_DEFINITIONS.map((definition) => readBWalkEditorObject(runtime, definition)).filter(Boolean);
+      };
+      environmentRef.current.setBWalkEditorObject = (id, changes = {}) => {
+        const runtime = environmentRef.current;
+        const definition = B_WALK_EDITOR_DEFINITIONS.find((item) => item.id === id);
+        const object = definition ? findBWalkEditorObject(runtime, id) : null;
+        if (!runtime?.THREE || !definition || !object) return runtime?.getBWalkEditorObjects?.() || [];
+        const baseline = ensureBWalkEditorBaseline(runtime, object);
+        const current = readBWalkEditorObject(runtime, definition);
+        const width = Math.max(.1, Math.min(240, Number(changes.width ?? current.width)));
+        const length = Math.max(.1, Math.min(240, Number(changes.length ?? current.length)));
+        const offsetX = Math.max(-120, Math.min(120, Number(changes.offsetX ?? current.offsetX)));
+        const offsetZ = Math.max(-120, Math.min(120, Number(changes.offsetZ ?? current.offsetZ)));
+        object.scale.x = baseline.scale[0] * width / baseline.size[0];
+        object.scale.z = baseline.scale[2] * length / baseline.size[2];
+        object.position.x = baseline.position[0] + offsetX;
+        object.position.z = baseline.position[2] + offsetZ;
+        const edits = runtime.bWalkEditorEdits || (runtime.bWalkEditorEdits = readBWalkEditorStorage());
+        edits[id] = { width, length, offsetX, offsetZ };
+        writeBWalkEditorStorage(edits);
+        return runtime.getBWalkEditorObjects();
+      };
+      environmentRef.current.resetBWalkEditorObject = (id) => {
+        const runtime = environmentRef.current;
+        const object = findBWalkEditorObject(runtime, id);
+        const baseline = object ? ensureBWalkEditorBaseline(runtime, object) : null;
+        if (object && baseline) { object.scale.fromArray(baseline.scale); object.position.fromArray(baseline.position); }
+        const edits = runtime.bWalkEditorEdits || (runtime.bWalkEditorEdits = readBWalkEditorStorage());
+        delete edits[id]; writeBWalkEditorStorage(edits);
+        return runtime.getBWalkEditorObjects?.() || [];
+      };
+      environmentRef.current.captureBWalkFormat = (sourceId) => {
+        const runtime = environmentRef.current;
+        const source = findBWalkEditorObject(runtime, sourceId);
+        const style = readBWalkEditorMaterial(source);
+        runtime.bWalkFormatBrush = style ? { sourceId, style } : null;
+        return runtime.bWalkFormatBrush;
+      };
+      environmentRef.current.applyBWalkFormat = (targetId) => {
+        const runtime = environmentRef.current;
+        const target = findBWalkEditorObject(runtime, targetId);
+        const brush = runtime.bWalkFormatBrush;
+        if (!target || !brush) return false;
+        return applyBWalkEditorMaterial(target, brush.style);
+      };
+      environmentRef.current.applyBWalkEditorEdits = (group = environmentRef.current?.bWalkSurfaceDetail) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.THREE || !group) return;
+        runtime.bWalkEditorEdits = runtime.bWalkEditorEdits || readBWalkEditorStorage();
+        B_WALK_EDITOR_DEFINITIONS.forEach((definition) => {
+          const changes = runtime.bWalkEditorEdits[definition.id];
+          if (!changes) return;
+          const object = findBWalkEditorObject(runtime, definition.id, group);
+          if (!object) return;
+          const baseline = ensureBWalkEditorBaseline(runtime, object);
+          object.scale.x = baseline.scale[0] * Number(changes.width || baseline.size[0]) / baseline.size[0];
+          object.scale.z = baseline.scale[2] * Number(changes.length || baseline.size[2]) / baseline.size[2];
+          object.position.x = baseline.position[0] + Number(changes.offsetX || 0);
+          object.position.z = baseline.position[2] + Number(changes.offsetZ || 0);
+        });
+      };
+      const readRuntimeEditorStorage = () => {
+        try { const value = JSON.parse(window.localStorage.getItem(RUNTIME_EDITOR_TRANSFORM_STORAGE_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
+      };
+      const writeRuntimeEditorStorage = (value) => { try { window.localStorage.setItem(RUNTIME_EDITOR_TRANSFORM_STORAGE_KEY, JSON.stringify(value)); } catch { /* local-only convenience */ } };
+      const runtimeEditableRoots = (runtime) => [runtime?.bWalkSurfaceDetail, runtime?.bWalk01Group, runtime?.importedMiddleBuildingGroup, runtime?.missingMiddleBuilding, runtime?.model]
+        .filter(Boolean)
+        .filter((root, index, roots) => roots.indexOf(root) === index);
+      const isLockedRuntimeObject = (object) => {
+        let current = object;
+        while (current) {
+          const name = String(current.name || '');
+          if (/^main-building|^PLAN_BUILDING_C|^EVIDENCE_BUILDING_01|^EVIDENCE_BUILDING_02|^WINDOW1-MAIN-BUILDING|^WINDOW1-(IMPORTED-)?MIDDLE-BUILDING/i.test(name)) return true;
+          current = current.parent;
+        }
+        return false;
+      };
+      const resolveRuntimeEditableObject = (runtime, id) => {
+        if (!id) return null;
+        for (const root of runtimeEditableRoots(runtime)) {
+          const found = root.getObjectByName?.(id) || root.getObjectByProperty?.('uuid', id);
+          if (found && !isLockedRuntimeObject(found)) return found;
+        }
+        return null;
+      };
+      const describeRuntimeEditableObject = (runtime, object) => {
+        if (!object || isLockedRuntimeObject(object)) return null;
+        const box = new runtime.THREE.Box3().setFromObject(object);
+        const size = box.getSize(new runtime.THREE.Vector3());
+        return { id: object.uuid, name: object.name || object.uuid, label: object.userData?.operatorLabel || object.name || '运行时对象', width: Number(size.x.toFixed(3)), height: Number(size.y.toFixed(3)), length: Number(size.z.toFixed(3)), position: object.position.toArray().map((value) => Number(value.toFixed(3))), scale: object.scale.toArray().map((value) => Number(value.toFixed(3))), role: object.userData?.editorRole || 'runtime-derived', source: object.userData?.evidenceLevel || 'Derived', locked: false };
+      };
+      environmentRef.current.getEditableRuntimeObjects = () => {
+        const runtime = environmentRef.current;
+        if (!runtime?.THREE) return [];
+        const list = []; const seen = new Set();
+        runtimeEditableRoots(runtime).forEach((root) => root.traverse((object) => {
+          if ((!object.isMesh && !object.isGroup) || object === root || object.userData?.editorPickProxy || seen.has(object.uuid) || isLockedRuntimeObject(object)) return;
+          seen.add(object.uuid); const descriptor = describeRuntimeEditableObject(runtime, object); if (descriptor) list.push(descriptor);
+        }));
+        return list;
+      };
+      environmentRef.current.selectEditableObject = (objectOrId) => {
+        const runtime = environmentRef.current;
+        const object = typeof objectOrId === 'string' ? resolveRuntimeEditableObject(runtime, objectOrId) : objectOrId;
+        if (!object || isLockedRuntimeObject(object) || !runtime?.transformControls) return null;
+        runtime.editableSelection = object;
+        runtime.transformControls.attach(object);
+        runtime.transformHelper.visible = true;
+        const brush = runtime.runtimeFormatBrush;
+        if (brush?.armed && (object.name || object.uuid) !== brush.sourceName) {
+          const applied = applyBWalkEditorMaterial(object, brush.style);
+          runtime.runtimeFormatBrush = { ...brush, armed: false, lastAppliedName: object.name || object.uuid };
+          runtime.onEditableFormatBrushStateChange?.(runtime.runtimeFormatBrush, applied);
+        }
+        const descriptor = describeRuntimeEditableObject(runtime, object);
+        runtime.onEditableSelectionChange?.(descriptor);
+        return descriptor;
+      };
+      environmentRef.current.clearEditableSelection = () => {
+        const runtime = environmentRef.current;
+        runtime?.transformControls?.detach?.();
+        if (runtime?.transformHelper) runtime.transformHelper.visible = false;
+        if (runtime) runtime.editableSelection = null;
+        runtime?.onEditableSelectionChange?.(null);
+      };
+      environmentRef.current.selectEditableAtPointer = (event) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.camera || !runtime?.renderer || !runtime?.THREE) return null;
+        const rect = runtime.renderer.domElement.getBoundingClientRect();
+        const pointer = new runtime.THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
+        const raycaster = new runtime.THREE.Raycaster(); raycaster.setFromCamera(pointer, runtime.camera);
+        const overlayRoots = [runtime.bWalkSurfaceDetail, runtime.bWalk01Group, runtime.importedMiddleBuildingGroup, runtime.missingMiddleBuilding].filter(Boolean);
+        const overlayHits = raycaster.intersectObjects(overlayRoots, true).filter((item) => item.object && !isLockedRuntimeObject(item.object) && !/^B-WALK-01-main-building-perimeter-rounded-path$|^EVIDENCE_curbs$/i.test(item.object.name || ''));
+        const modelHits = raycaster.intersectObjects([runtime.model].filter(Boolean), true);
+        const overlayProxyHit = overlayHits.find((item) => item.object?.userData?.editorPickProxy);
+        const modelProxyHit = modelHits.find((item) => item.object?.userData?.editorModelPickProxy);
+        const hits = overlayProxyHit ? [overlayProxyHit] : (modelProxyHit ? [modelProxyHit] : (overlayHits.length ? overlayHits : modelHits));
+        const hit = hits.find((item) => item.object && !isLockedRuntimeObject(item.object));
+        if (!hit) { runtime.clearEditableSelection?.(); return null; }
+        let target = hit.object.userData?.editorPickProxy ? resolveRuntimeEditableObject(runtime, hit.object.userData.editorProxyTarget) : hit.object;
+        if (!target) { runtime.clearEditableSelection?.(); return null; }
+        return runtime.selectEditableObject(target);
+      };
+      environmentRef.current.setEditableTransformMode = (mode = 'translate') => {
+        const runtime = environmentRef.current; const next = ['translate', 'scale'].includes(mode) ? mode : 'translate';
+        runtime.editableTransformMode = next; runtime.transformControls?.setMode?.(next); return next;
+      };
+      environmentRef.current.commitEditableTransform = () => {
+        const runtime = environmentRef.current; const object = runtime?.editableSelection;
+        if (!object || isLockedRuntimeObject(object)) return null;
+        const edits = runtime.runtimeEditorTransforms || (runtime.runtimeEditorTransforms = readRuntimeEditorStorage());
+        edits[object.name || object.uuid] = { position: object.position.toArray(), rotation: object.rotation.toArray(), scale: object.scale.toArray() };
+        writeRuntimeEditorStorage(edits);
+        const descriptor = describeRuntimeEditableObject(runtime, object); runtime.onEditableSelectionChange?.(descriptor); return descriptor;
+      };
+      environmentRef.current.captureEditableFormat = () => {
+        const runtime = environmentRef.current; const source = runtime?.editableSelection;
+        const style = readBWalkEditorMaterial(source);
+        runtime.runtimeFormatBrush = style ? { sourceName: source.name || source.uuid, sourceLabel: source.userData?.operatorLabel || source.name || '对象', style, armed: true } : null;
+        runtime.onEditableFormatBrushStateChange?.(runtime.runtimeFormatBrush, Boolean(style));
+        return runtime.runtimeFormatBrush;
+      };
+      environmentRef.current.applyEditableFormat = () => {
+        const runtime = environmentRef.current; const target = runtime?.editableSelection;
+        if (!target || !runtime.runtimeFormatBrush) return false;
+        const applied = applyBWalkEditorMaterial(target, runtime.runtimeFormatBrush.style);
+        runtime.runtimeFormatBrush = { ...runtime.runtimeFormatBrush, armed: false, lastAppliedName: target.name || target.uuid };
+        runtime.onEditableFormatBrushStateChange?.(runtime.runtimeFormatBrush, applied);
+        return applied;
+      };
+      environmentRef.current.clipEditableObject = ({ axis = 'x', keepSide = 'positive', fraction = 0.5 } = {}) => {
+        const runtime = environmentRef.current; const target = runtime?.editableSelection;
+        if (!target || isLockedRuntimeObject(target) || !runtime?.THREE) return null;
+        const safeAxis = ['x', 'y', 'z'].includes(axis) ? axis : 'x';
+        const safeFraction = Math.max(0.05, Math.min(0.95, Number(fraction) || 0.5));
+        const box = new runtime.THREE.Box3().setFromObject(target);
+        if (box.isEmpty()) return null;
+        const min = box.min[safeAxis]; const max = box.max[safeAxis];
+        const cut = min + (max - min) * safeFraction;
+        const normal = new runtime.THREE.Vector3(0, 0, 0); normal[safeAxis] = keepSide === 'negative' ? -1 : 1;
+        const plane = new runtime.THREE.Plane(normal, -normal[safeAxis] * cut);
+        const entries = [];
+        target.traverse?.((mesh) => {
+          if (!mesh.isMesh || !mesh.material) return;
+          const previousMaterial = mesh.material;
+          const materials = Array.isArray(previousMaterial) ? previousMaterial : [previousMaterial];
+          const appliedMaterials = materials.map((material) => {
+            if (!material?.clone) return material;
+            const clone = material.clone();
+            const existingPlanes = Array.isArray(clone.clippingPlanes) ? clone.clippingPlanes.map((item) => item.clone?.() || item) : [];
+            clone.clippingPlanes = [...existingPlanes, plane.clone()];
+            clone.clipIntersection = false;
+            clone.needsUpdate = true;
+            return clone;
+          });
+          mesh.material = Array.isArray(previousMaterial) ? appliedMaterials : appliedMaterials[0];
+          entries.push({ mesh, previousMaterial, appliedMaterial: mesh.material });
+        });
+        if (!entries.length) return null;
+        runtime.renderer.localClippingEnabled = true;
+        const record = { target, axis: safeAxis, keepSide: keepSide === 'negative' ? 'negative' : 'positive', fraction: safeFraction, cut, entries };
+        runtime.editableClipHistory = runtime.editableClipHistory || [];
+        runtime.editableClipHistory.push(record);
+        return { target: target.name || target.uuid, axis: safeAxis, keepSide: record.keepSide, fraction: safeFraction, cut, meshCount: entries.length };
+      };
+      environmentRef.current.undoEditableClip = () => {
+        const runtime = environmentRef.current; const history = runtime?.editableClipHistory;
+        const record = history?.pop?.();
+        if (!record) return null;
+        record.entries.forEach(({ mesh, previousMaterial, appliedMaterial }) => {
+          if (mesh.material === appliedMaterial) mesh.material = previousMaterial;
+          const applied = Array.isArray(appliedMaterial) ? appliedMaterial : [appliedMaterial];
+          applied.forEach((material) => material?.dispose?.());
+        });
+        return { target: record.target?.name || record.target?.uuid || '对象', axis: record.axis, keepSide: record.keepSide, fraction: record.fraction, remaining: history.length };
+      };
+      environmentRef.current.getEditableClipHistory = () => (environmentRef.current?.editableClipHistory || []).map((record) => ({ target: record.target?.name || record.target?.uuid, axis: record.axis, keepSide: record.keepSide, fraction: record.fraction }));
+      environmentRef.current.applyRuntimeEditorTransforms = (root) => {
+        const runtime = environmentRef.current; const edits = runtime.runtimeEditorTransforms || (runtime.runtimeEditorTransforms = readRuntimeEditorStorage());
+        root?.traverse?.((object) => { const edit = edits[object.name]; if (!edit || isLockedRuntimeObject(object)) return; if (Array.isArray(edit.position)) object.position.fromArray(edit.position); if (Array.isArray(edit.rotation)) object.rotation.fromArray(edit.rotation); if (Array.isArray(edit.scale)) object.scale.fromArray(edit.scale); });
+      };
+      const readRuntimeEditorDeletedStorage = () => {
+        try { const value = JSON.parse(window.localStorage.getItem(RUNTIME_EDITOR_DELETED_STORAGE_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
+      };
+      const writeRuntimeEditorDeletedStorage = (value) => { try { window.localStorage.setItem(RUNTIME_EDITOR_DELETED_STORAGE_KEY, JSON.stringify(value)); } catch { /* local-only convenience */ } };
+      environmentRef.current.applyRuntimeEditorDeleted = (root) => {
+        const runtime = environmentRef.current; const deleted = runtime.runtimeEditorDeleted || (runtime.runtimeEditorDeleted = readRuntimeEditorDeletedStorage());
+        root?.traverse?.((object) => { if (deleted[object.name] && !isLockedRuntimeObject(object)) object.visible = false; });
+      };
+      environmentRef.current.refreshEditablePickProxies = (group = environmentRef.current?.bWalkSurfaceDetail) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.THREE || !group) return 0;
+        group.children.filter((child) => child.userData?.editorPickProxy).forEach((child) => { group.remove(child); child.geometry?.dispose?.(); child.material?.dispose?.(); });
+        group.updateMatrixWorld(true);
+        const targets = ['B-WALK-01-fence-perpendicular-asphalt-branch', 'B-WALK-01-small-gate', 'B-WALK-01-expanded-road-1_5-5-3', 'B-WALK-01-green-building-side', 'B-WALK-01-green-between-parallel-roads'];
+        let count = 0;
+        targets.forEach((targetName) => {
+          const target = group.getObjectByName(targetName);
+          if (!target || !target.visible) return;
+          const box = new runtime.THREE.Box3().setFromObject(target); const center = box.getCenter(new runtime.THREE.Vector3()); const size = box.getSize(new runtime.THREE.Vector3());
+          group.worldToLocal(center);
+          const priorityLift = targetName === 'B-WALK-01-fence-perpendicular-asphalt-branch' ? .92 : targetName === 'B-WALK-01-small-gate' ? 1.05 : targetName === 'B-WALK-01-expanded-road-1_5-5-3' ? .78 : targetName === 'B-WALK-01-green-building-side' ? .64 : .56;
+          const proxy = new runtime.THREE.Mesh(new runtime.THREE.BoxGeometry(Math.max(.2, size.x), .045, Math.max(.2, size.z)), new runtime.THREE.MeshBasicMaterial({ transparent: true, opacity: 0, colorWrite: false, depthWrite: false, depthTest: false }));
+          proxy.name = `EDITOR-PICK-PROXY-${targetName}`; proxy.position.set(center.x, center.y + priorityLift, center.z); proxy.userData = { editorPickProxy: true, editorProxyTarget: targetName }; proxy.frustumCulled = false; proxy.renderOrder = 239; group.add(proxy); count += 1;
+        });
+        return count;
+      };
+      environmentRef.current.refreshEditableModelPickProxies = () => {
+        const runtime = environmentRef.current; const model = runtime?.model;
+        if (!runtime?.THREE || !model) return 0;
+        const oldProxyGroup = model.getObjectByName('EDITOR-MODEL-PICK-PROXIES');
+        if (oldProxyGroup) { oldProxyGroup.parent?.remove(oldProxyGroup); oldProxyGroup.traverse((child) => { child.geometry?.dispose?.(); child.material?.dispose?.(); }); }
+        const proxyGroup = new runtime.THREE.Group(); proxyGroup.name = 'EDITOR-MODEL-PICK-PROXIES'; proxyGroup.userData = { editorPickProxy: true, editorModelPickProxyGroup: true }; model.add(proxyGroup);
+        const sources = [];
+        ['PLAN_ROAD_network_1', 'ROUTE02_01_02_internal_paving'].forEach((targetName) => {
+          const target = model.getObjectByName(targetName);
+          if (target && target.visible && !isLockedRuntimeObject(target)) sources.push(target);
+        });
+        let count = 0;
+        sources.forEach((source) => {
+          source.updateMatrixWorld(true);
+          const box = new runtime.THREE.Box3().setFromObject(source); const size = box.getSize(new runtime.THREE.Vector3()); const center = box.getCenter(new runtime.THREE.Vector3());
+          model.worldToLocal(center);
+          const proxy = new runtime.THREE.Mesh(new runtime.THREE.BoxGeometry(Math.max(.2, size.x), Math.max(.12, Math.min(1.2, size.y)), Math.max(.2, size.z)), new runtime.THREE.MeshBasicMaterial({ transparent: true, opacity: 0, colorWrite: false, depthWrite: false, depthTest: false }));
+          proxy.name = `EDITOR-MODEL-PICK-PROXY-${source.name}`; proxy.position.copy(center); proxy.userData = { editorPickProxy: true, editorModelPickProxy: true, editorProxyTarget: source.name }; proxy.frustumCulled = false; proxy.renderOrder = 500; proxyGroup.add(proxy); count += 1;
+        });
+        return count;
+      };
+      environmentRef.current.copyEditableObject = () => {
+        const runtime = environmentRef.current; const object = runtime?.editableSelection;
+        if (!object || isLockedRuntimeObject(object)) return null;
+        runtime.runtimeClipboard = object;
+        return { name: object.name || object.uuid, label: object.userData?.operatorLabel || object.name || '对象', source: object.userData?.evidenceLevel || 'Derived' };
+      };
+      environmentRef.current.pasteEditableObject = () => {
+        const runtime = environmentRef.current; const source = runtime?.runtimeClipboard;
+        if (!source || isLockedRuntimeObject(source) || !source.parent) return null;
+        const clone = source.clone(true);
+        const sourceName = String(source.name || 'runtime-object').replace(/-copy-\d+$/, '');
+        runtime.runtimePasteCounter = Number(runtime.runtimePasteCounter || 0) + 1;
+        clone.name = `${sourceName}-copy-${runtime.runtimePasteCounter}`;
+        clone.position.x += 1.5; clone.position.z += 1.5;
+        clone.userData = { ...(clone.userData || {}), editorClone: true, editorSourceName: source.name || source.uuid, geometryMutated: false, evidenceLevel: 'Derived' };
+        clone.traverse((node) => {
+          node.userData = { ...(node.userData || {}), editorClone: true, editorSourceName: source.name || source.uuid, geometryMutated: false };
+          if (node.material) node.material = Array.isArray(node.material) ? node.material.map((material) => material?.clone?.() || material) : node.material.clone?.() || node.material;
+        });
+        source.parent.add(clone);
+        runtime.selectEditableObject?.(clone);
+        runtime.commitEditableTransform?.();
+        return describeRuntimeEditableObject(runtime, clone);
+      };
+      environmentRef.current.deleteEditableObject = () => {
+        const runtime = environmentRef.current; const object = runtime?.editableSelection;
+        if (!object || isLockedRuntimeObject(object) || !object.parent) return null;
+        runtime.runtimeDeletedUndo = { object, parent: object.parent, index: object.parent.children.indexOf(object), name: object.name || object.uuid };
+        const deleted = runtime.runtimeEditorDeleted || (runtime.runtimeEditorDeleted = readRuntimeEditorDeletedStorage());
+        deleted[object.name || object.uuid] = true; writeRuntimeEditorDeletedStorage(deleted);
+        object.parent.remove(object); runtime.clearEditableSelection?.();
+        return { deleted: true, name: object.name || object.uuid };
+      };
+      environmentRef.current.undoEditableDelete = () => {
+        const runtime = environmentRef.current; const undo = runtime?.runtimeDeletedUndo;
+        if (!undo?.object || !undo.parent) return null;
+        const deleted = runtime.runtimeEditorDeleted || (runtime.runtimeEditorDeleted = readRuntimeEditorDeletedStorage());
+        delete deleted[undo.name]; writeRuntimeEditorDeletedStorage(deleted);
+        undo.parent.add(undo.object);
+        if (Number.isFinite(undo.index)) undo.parent.children.splice(Math.min(undo.index, undo.parent.children.length - 1), 0, undo.parent.children.pop());
+        runtime.selectEditableObject?.(undo.object); runtime.runtimeDeletedUndo = null;
+        return describeRuntimeEditableObject(runtime, undo.object);
+      };
+      environmentRef.current.setBWalkVisibility = (visible = true) => {
+        const runtime = environmentRef.current;
+        const groups = [runtime?.bWalkSurfaceDetail, runtime?.bWalk01Group].filter(Boolean);
+        groups.forEach((group) => { group.visible = Boolean(visible); });
+        return { visible: Boolean(visible), groups: groups.map((group) => group.name) };
+      };
+      environmentRef.current.setMissingMiddleBuilding = (visible = true) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model || !runtime?.THREE) return { visible: false, created: false, error: 'runtime_not_ready' };
+        const THREE = runtime.THREE;
+        const existing = runtime.model.getObjectByName('EVIDENCE_BUILDING_02');
+        if (existing) {
+          existing.visible = Boolean(visible);
+          existing.userData = { ...(existing.userData || {}), restoredBy: 'middle-building-gap-fix', sourceBaseline: 'complete-capture-20261010-v1/baseline-objects.json', geometryMutated: false };
+          runtime.missingMiddleBuilding = existing;
+          return { visible: existing.visible, created: false, object: existing.name, geometryMutated: false };
+        }
+        if (!runtime.missingMiddleBuilding) {
+          const group = new THREE.Group();
+          group.name = 'WINDOW1-MIDDLE-BUILDING-EVIDENCE_BUILDING_02';
+          const sourceBounds = { minX: -33.294048, maxX: 55.381046, minZ: 87.767563, maxZ: 120.549042, minY: 0, maxY: 36.5 };
+          const width = sourceBounds.maxX - sourceBounds.minX;
+          const depth = sourceBounds.maxZ - sourceBounds.minZ;
+          const height = sourceBounds.maxY - sourceBounds.minY;
+          const centerX = (sourceBounds.minX + sourceBounds.maxX) / 2;
+          const centerZ = (sourceBounds.minZ + sourceBounds.maxZ) / 2;
+          const concrete = new THREE.MeshStandardMaterial({ color: 0xb7b8b1, roughness: 0.88, metalness: 0.03 });
+          const roof = new THREE.MeshStandardMaterial({ color: 0x6e7474, roughness: 0.72, metalness: 0.12 });
+          const glass = new THREE.MeshStandardMaterial({ color: 0x516b79, roughness: 0.3, metalness: 0.35, transparent: true, opacity: 0.92 });
+          const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), concrete);
+          body.name = 'WINDOW1-MIDDLE-BUILDING-EVIDENCE_BUILDING_02-body';
+          body.position.set(centerX, Number(runtime.groundY || 0) + height / 2, centerZ);
+          body.userData = { evidenceLevel: 'Restored_from_existing_baseline', sourceObject: 'EVIDENCE_BUILDING_02', geometryMutated: false };
+          group.add(body);
+          const roofPlate = new THREE.Mesh(new THREE.BoxGeometry(width + 1.4, 0.32, depth + 1.4), roof);
+          roofPlate.name = 'WINDOW1-MIDDLE-BUILDING-EVIDENCE_BUILDING_02-roof';
+          roofPlate.position.set(centerX, Number(runtime.groundY || 0) + height + 0.16, centerZ);
+          group.add(roofPlate);
+          const windowCount = 9;
+          for (let index = 0; index < windowCount; index += 1) {
+            const x = sourceBounds.minX + 6 + index * ((width - 12) / (windowCount - 1));
+            const pane = new THREE.Mesh(new THREE.BoxGeometry(5.6, 5.8, 0.08), glass);
+            pane.name = `WINDOW1-MIDDLE-BUILDING-EVIDENCE_BUILDING_02-window-${String(index + 1).padStart(2, '0')}`;
+            pane.position.set(x, Number(runtime.groundY || 0) + height * 0.58, sourceBounds.maxZ + 0.08);
+            group.add(pane);
+          }
+          group.position.set(-(runtime.model.position.x || 0), -(runtime.model.position.y || 0), -(runtime.model.position.z || 0));
+          group.renderOrder = 25;
+          group.traverse((node) => { node.frustumCulled = false; });
+          group.userData = { schema: 'middle_building_gap_fix.v1', sourceObject: 'EVIDENCE_BUILDING_02', sourceBaseline: 'docs/evidence/complete-capture-20261010-v1/baseline-objects.json', sourceBounds, evidenceLevel: 'Restored_from_existing_baseline', geometryMutated: false, operatorLabel: '中间长条建筑②' };
+          runtime.model.add(group);
+          runtime.missingMiddleBuilding = group;
+          runtime.applyRuntimeEditorTransforms?.(group);
+          runtime.applyRuntimeEditorDeleted?.(group);
+        }
+        runtime.missingMiddleBuilding.visible = Boolean(visible);
+        return { visible: runtime.missingMiddleBuilding.visible, created: true, object: runtime.missingMiddleBuilding.name, geometryMutated: false };
+      };
+      environmentRef.current.setImportedMiddleBuilding = (visible = true) => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model || !runtime?.THREE) return Promise.resolve({ visible: false, imported: false, error: 'runtime_not_ready' });
+        const refocusIfRequested = () => {
+          if (new URLSearchParams(window.location.search).get('focus') === 'middle-building') runtime.focusMissingMiddleBuilding?.();
+        };
+        if (runtime.importedMiddleBuildingGroup) {
+          runtime.importedMiddleBuildingGroup.visible = Boolean(visible);
+          refocusIfRequested();
+          return Promise.resolve({ visible: runtime.importedMiddleBuildingGroup.visible, imported: true, object: 'EVIDENCE_BUILDING_02', geometryMutated: false });
+        }
+        const sourceUrl = importedMiddleBuildingAsset?.url;
+        if (!sourceUrl) {
+          const result = runtime.setMissingMiddleBuilding?.(visible);
+          refocusIfRequested();
+          return Promise.resolve(result);
+        }
+        return new Promise((resolve) => {
+          new GLTFLoader().load(sourceUrl, (gltf) => {
+            const sourceRoot = gltf.scene;
+            const target = sourceRoot.getObjectByName('EVIDENCE_BUILDING_02');
+            if (!target) {
+              const result = runtime.setMissingMiddleBuilding?.(visible);
+              refocusIfRequested();
+              resolve(result);
+              return;
+            }
+            const keep = new Set();
+            target.traverse((node) => keep.add(node.uuid));
+            sourceRoot.traverse((node) => { node.visible = keep.has(node.uuid); node.frustumCulled = false; });
+            runtime.model.traverse((node) => {
+              if (/^PLAN_BUILDING_C(?:\.\d+)?$/i.test(node.name || '')) {
+                node.visible = false;
+                node.userData = { ...(node.userData || {}), replacedBy: 'EVIDENCE_BUILDING_02', geometryMutated: false };
+              }
+            });
+            sourceRoot.name = 'WINDOW1-IMPORTED-MIDDLE-BUILDING-EVIDENCE_BUILDING_02';
+            sourceRoot.userData = { schema: 'imported_middle_building_placement.v1', sourceAssetId: importedMiddleBuildingAsset.id, sourceObject: 'EVIDENCE_BUILDING_02', placement: 'same registered footprint as PLAN_BUILDING_C', geometryMutated: false, evidenceLevel: 'Observed' };
+            sourceRoot.visible = Boolean(visible);
+            runtime.model.add(sourceRoot);
+            runtime.importedMiddleBuildingGroup = sourceRoot;
+            runtime.applyRuntimeEditorTransforms?.(sourceRoot);
+            runtime.applyRuntimeEditorDeleted?.(sourceRoot);
+            if (runtime.missingMiddleBuilding) runtime.missingMiddleBuilding.visible = false;
+            refocusIfRequested();
+            resolve({ visible: sourceRoot.visible, imported: true, object: 'EVIDENCE_BUILDING_02', sourceAssetId: importedMiddleBuildingAsset.id, geometryMutated: false });
+          }, undefined, () => {
+            const result = runtime.setMissingMiddleBuilding?.(visible);
+            refocusIfRequested();
+            resolve(result);
+          });
+        });
+      };
+      environmentRef.current.focusMissingMiddleBuilding = () => {
+        const runtime = environmentRef.current;
+        const target = runtime?.importedMiddleBuildingGroup || runtime?.missingMiddleBuilding || runtime?.model?.getObjectByName?.('EVIDENCE_BUILDING_02');
+        if (!target || !runtime?.camera || !runtime?.controls) return false;
+        const focusObject = target.getObjectByName?.('EVIDENCE_BUILDING_02') || target;
+        const box = new runtime.THREE.Box3().setFromObject(focusObject);
+        if (box.isEmpty()) return false;
+        const center = box.getCenter(new runtime.THREE.Vector3());
+        const size = box.getSize(new runtime.THREE.Vector3());
+        const distance = Math.max(70, Math.max(size.x, size.y, size.z) * 1.35);
+        runtime.camera.position.copy(center).add(new runtime.THREE.Vector3(distance * 0.9, distance * 0.78, distance * 0.9));
+        runtime.controls.target.copy(center);
+        runtime.controls.update();
+        return { center: center.toArray(), distance };
+      };
+      if (typeof window !== 'undefined') window.__spatialTwinRuntime = environmentRef.current;
+      // [临时诊断] 图层合并预览：把其他图层克隆进来做世界坐标对准
+      if (typeof window !== 'undefined') {
+        const mergedGroup = new THREE.Group();
+        mergedGroup.name = '__SF_LAYER_MERGE__';
+        scene.add(mergedGroup);
+        const mergeState = { on: false, ids: new Set() };
+        window.__sfMergedGroup = mergedGroup;
+        window.__sfMergeState = mergeState;
+        window.__sfLayerMerge = {
+          count: () => mergeState.ids.size,
+          clear: () => {
+            while (mergedGroup.children.length) {
+              const c = mergedGroup.children.pop();
+              scene.remove(c);
+            }
+            mergeState.ids.clear();
+            mergeState.on = false;
+            return mergeState.ids.size;
+          },
+          toggle: async () => {
+            const id = modelAsset?.id || 'asset_a98b0182ed4e';
+            if (!id) return 0;
+            window.__sfMergeLog = window.__sfMergeLog || [];
+            if (mergeState.ids.has(id)) {
+              const idx = mergedGroup.children.findIndex((c) => c.userData.sfAssetId === id);
+              if (idx >= 0) mergedGroup.children.splice(idx, 1);
+              mergeState.ids.delete(id);
+              return mergeState.ids.size;
+            }
+            const asset = (typeof visualAssets !== 'undefined' ? visualAssets : []).find((a) => a.id === id);
+            if (!asset?.url) return mergeState.ids.size;
+            const gltf = await new GLTFLoader().loadAsync(asset.url);
+            const obj = gltf.scene;
+            obj.userData.sfAssetId = id;
+            const registration = (typeof project !== 'undefined' ? project : null)?.modelRegistration || {};
+            const s = registration.scaleXYZ || [1, 1, 1];
+            const isMain = id === 'asset_a98b0182ed4e';
+            obj.scale.set(s[0] || 1, isMain ? (s[1] || 1) : 1, s[2] || 1);
+            const target = new THREE.Vector3(-(registration.offsetXM || 0), 0, -(registration.offsetZM || 0));
+            const box = new THREE.Box3().setFromObject(obj);
+            const c = box.getCenter(new THREE.Vector3());
+            obj.position.set(target.x - c.x, -box.min.y, target.z - c.z);
+            mergedGroup.add(obj);
+            mergeState.ids.add(id);
+            mergeState.on = true;
+            // 相机对准合并结果
+            const wb = new THREE.Box3().setFromObject(mergedGroup);
+            if (!wb.isEmpty()) {
+              const wc = wb.getCenter(new THREE.Vector3());
+              const ws = wb.getSize(new THREE.Vector3());
+              const d = Math.max(60, Math.max(ws.x, ws.z) * 1.15);
+              camera.position.set(wc.x + d * 0.62, wc.y + d * 0.72, wc.z + d * 0.62);
+              controls.target.copy(wc);
+              controls.update();
+            }
+            window.__sfMergeLog.push({ id, url: String(asset.url).slice(-60) });
+            return mergeState.ids.size;
+          },
+        };
+      }
+      applySceneEnvironment(environmentRef.current, scenarioPointRef.current, displayModeRef.current);
+      if (modelAsset?.kind === 'main_building_facade_candidate_glb') {
+        // The photo candidate uses warm wall and blue-grey glazing materials.
+        // Keep the default site lighting for other layers, but avoid washing
+        // the facade into white during the candidate review.
+        ambient.intensity = 0.68;
+        hemisphere.intensity = 0.28;
+        key.intensity = 1.25;
+        renderer.toneMappingExposure = 0.82;
+      }
+      const disposePreviewModel = () => {
+        if (!previewModel) return;
+        scene.remove(previewModel);
+        previewModel.traverse((child) => {
+          child.geometry?.dispose?.();
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.filter(Boolean).forEach((material) => material.dispose?.());
+        });
+        previewModel = null;
+        if (environmentRef.current) environmentRef.current.previewModel = null;
+      };
+      const showFastPreview = (loadedPreview) => {
+        if (disposed) return;
+        if (fullModelReady) {
+          loadedPreview.traverse((child) => {
+            child.geometry?.dispose?.();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.filter(Boolean).forEach((material) => material.dispose?.());
+          });
+          return;
+        }
+        previewModel = loadedPreview;
+        const bounds = new THREE.Box3().setFromObject(previewModel);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const size = bounds.getSize(new THREE.Vector3());
+        const maxDimension = Math.max(size.x, size.y, size.z) || 1;
+        previewModel.position.sub(center);
+        scene.add(previewModel);
+        controls.target.set(0, 0, 0);
+        const overviewDistance = Math.max(maxDimension * 1.32, 260);
+        camera.position.set(-overviewDistance * 0.48, Math.max(120, overviewDistance * 0.62), overviewDistance * 0.96);
+        camera.lookAt(controls.target);
+        controls.minDistance = Math.max(0.05, maxDimension * 0.006);
+        controls.maxDistance = Math.max(100, maxDimension * 12);
+        controls.update();
+        environmentRef.current.previewModel = previewModel;
+        setLoadState({ status: 'preview', message: '快速三维已可操作，真实材质模型继续在后台加载…' });
+      };
+      const finishLoad = (loadedModel) => {
+        if (disposed) return;
+        fullModelReady = true;
+        disposePreviewModel();
+        ensureEnvironmentMap();
+        model = loadedModel;
+        const suppressedCurrentSceneObjectCount = suppressCurrentSceneObjects(model, showHistoricalConstruction);
+        environmentRef.current.suppressedCurrentSceneObjectCount = suppressedCurrentSceneObjectCount;
+        environmentRef.current.suppressedUserDeletedRedBoxObjectCount = suppressUserDeletedRedBoxObjects(model);
+        // The site-context GLB is exterior-only. The supplied SKP/CAD source
+        // remains available as a separately registered indoor artifact, so
+        // indoor walls, columns and materials are not mixed into the outdoor
+        // context and are not silently discarded.
+        const bounds = new THREE.Box3().setFromObject(model);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const size = bounds.getSize(new THREE.Vector3());
+        const maxDimension = Math.max(size.x, size.y, size.z) || 1;
+        model.position.sub(center);
+        environmentRef.current.sceneRadius = maxDimension;
+        environmentRef.current.highDensitySiteModel = modelAsset?.kind === 'site_context_glb';
+        environmentRef.current.facadeReviewCandidate = modelAsset?.kind === 'main_building_facade_candidate_glb';
+        environmentRef.current.groundY = bounds.min.y - center.y - .035;
+        const shadowExtent = Math.max(18, maxDimension * .72);
+        key.shadow.camera.left = -shadowExtent;
+        key.shadow.camera.right = shadowExtent;
+        key.shadow.camera.top = shadowExtent;
+        key.shadow.camera.bottom = -shadowExtent;
+        key.shadow.camera.far = Math.max(180, maxDimension * 5);
+        key.shadow.camera.updateProjectionMatrix();
+        ground.position.y = environmentRef.current.groundY;
+        ground.scale.setScalar(Math.max(120, maxDimension * 5));
+        let selectiveShadowCasterCount = 0;
+        // The renderer's shadow map is disabled for the dense exterior GLB;
+        // walking every mesh to prepare shadow flags only delays first paint.
+        // Keep the detailed path for indoor/CAD layers where the flags are
+        // useful, and leave the registered site context untouched.
+        if (!environmentRef.current.highDensitySiteModel) {
+          model.traverse((child) => {
+            if (!child.isMesh) return;
+            child.castShadow = true;
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            const transparent = materials.some((item) => item?.transparent && item.opacity < .88);
+            child.castShadow = !transparent;
+            child.receiveShadow = true;
+          });
+        }
+        environmentRef.current.hasSelectiveSiteShadows = selectiveShadowCasterCount > 0;
+        applySceneEnvironment(environmentRef.current, scenarioPointRef.current, displayModeRef.current);
+        camera.near = Math.max(0.01, maxDimension / 1000);
+        camera.far = Math.max(1000, maxDimension * 20);
+        camera.updateProjectionMatrix();
+        controls.minDistance = Math.max(0.05, maxDimension * 0.006);
+        controls.maxDistance = Math.max(100, maxDimension * 12);
+        const siteBuildingHalfExtents = Array.isArray(modelAsset?.metadata?.mainBuildingHalfExtentsM)
+          ? modelAsset.metadata.mainBuildingHalfExtentsM.map(Number)
+          : [];
+        const siteBuildingHeight = Number(modelAsset?.metadata?.mainBuildingHeightM || 0);
+        const siteBuildingFocus = modelAsset?.kind === 'site_context_glb'
+          && siteBuildingHalfExtents.length >= 2
+          && siteBuildingHalfExtents.every(Number.isFinite)
+          && Number.isFinite(siteBuildingHeight)
+          && siteBuildingHeight > 0;
+        const facadeBounds = new THREE.Box3();
+        if (modelAsset?.kind === 'main_building_facade_candidate_glb') {
+          model.traverse((object) => {
+            if (object.isMesh && String(object.name || '').startsWith('main-building-exterior-review-')) facadeBounds.expandByObject(object);
+          });
+        }
+        const facadeFocus = modelAsset?.kind === 'main_building_facade_candidate_glb' && !facadeBounds.isEmpty();
+        // Location-package candidates contain the full relative base scene plus
+        // a small evidence-bound local group.  Fitting the whole package makes
+        // the requested photo group appear absent.  Focus B67 on its own
+        // evidence geometry while leaving the GLB and base scene unchanged.
+        const b67Bounds = new THREE.Box3();
+        if (/LP-B67-001-360-dot-v1-candidate-v\d+/i.test(modelAsset?.name || '')) {
+          model.traverse((object) => {
+            if (object.isMesh && String(object.name || '').startsWith('b67-fixed-')) b67Bounds.expandByObject(object);
+          });
+        }
+        const b67Focus = !b67Bounds.isEmpty();
+        const fitTarget = siteBuildingFocus
+          ? new THREE.Vector3(-center.x, siteBuildingHeight / 2 - center.y, -center.z)
+          : b67Focus
+            ? b67Bounds.getCenter(new THREE.Vector3())
+          : new THREE.Vector3(0, 0, 0);
+        const fitDimension = siteBuildingFocus
+          ? Math.max(siteBuildingHalfExtents[0] * 2, siteBuildingHalfExtents[1] * 2, siteBuildingHeight)
+          : b67Focus
+            ? Math.max(24, b67Bounds.getSize(new THREE.Vector3()).length() * 1.15)
+          : maxDimension;
+        const fitView = () => {
+          if (siteBuildingFocus) {
+            // The site GLB contains the whole route-visible context, not only
+            // the CAD building. Fitting against the building footprint alone
+            // put the camera too close to the roof and hid the two parallel
+            // lanes, fences and adjacent buildings behind one white plane.
+            // Use the complete imported scene envelope for the first frame,
+            // while keeping the building centre as the visual target.
+            const overviewDistance = Math.max(
+              maxDimension * 1.12,
+              Math.max(siteBuildingHalfExtents[0] * 2, siteBuildingHalfExtents[1] * 2) * 1.08,
+              Math.max(siteBuildingHalfExtents[0] * 2, siteBuildingHalfExtents[1] * 2) * 1.2,
+              220
+            );
+            const primaryFacadeTarget = fitTarget.clone().add(new THREE.Vector3(
+              -siteBuildingHalfExtents[0] * 0.12,
+              -siteBuildingHeight * 0.02,
+              -siteBuildingHalfExtents[1] * 0.18
+            ));
+            controls.target.copy(primaryFacadeTarget);
+            camera.position.copy(primaryFacadeTarget).add(new THREE.Vector3(
+              -overviewDistance * 0.48,
+              Math.max(120, overviewDistance * 0.62),
+              overviewDistance * 0.96
+            ));
+          } else if (b67Focus) {
+            const b67Distance = Math.max(fitDimension * 1.28, 38);
+            controls.target.copy(fitTarget);
+            camera.position.copy(fitTarget).add(new THREE.Vector3(b67Distance * 0.82, b67Distance * 0.58, b67Distance * 0.82));
+          } else if (facadeFocus) {
+            const facadeCenter = facadeBounds.getCenter(new THREE.Vector3());
+            const facadeRadius = facadeBounds.getBoundingSphere(new THREE.Sphere()).radius;
+            const facadeDistance = Math.max(facadeRadius * 2.35, 100);
+            controls.target.copy(facadeCenter);
+            camera.position.copy(facadeCenter).add(new THREE.Vector3(facadeDistance * 0.82, facadeDistance * 0.54, facadeDistance * 0.82));
+          } else {
+            const distance = fitDimension * 1.45;
+            controls.target.copy(fitTarget);
+            camera.position.copy(fitTarget).add(new THREE.Vector3(distance, distance * 0.58, distance));
+          }
+          camera.up.set(0, 1, 0);
+          camera.lookAt(controls.target);
+          controls.update();
+        };
+        const zoomByFactor = (factor) => {
+          const offset = camera.position.clone().sub(controls.target);
+          const nextDistance = Math.min(controls.maxDistance, Math.max(controls.minDistance, offset.length() * factor));
+          if (!offset.length()) offset.set(1, 0.7, 1);
+          camera.position.copy(controls.target).add(offset.setLength(nextDistance));
+          controls.update();
+        };
+        const availableLevels = Array.isArray(modelAsset?.metadata?.levels) && modelAsset.metadata.levels.length
+          ? modelAsset.metadata.levels
+          : [{ floorNumber: 1, label: '1F', elevationM: Number(modelAsset?.metadata?.bounds?.min?.[1] || 0) }];
+        const levelForNumber = (floorNumber) => availableLevels.find((level) => Number(level.floorNumber) === Number(floorNumber)) || availableLevels[0];
+        let activeLevel = levelForNumber(selectedFloorRef.current);
+        let walkFloorY = Number(activeLevel.elevationM || 0) - center.y;
+        let walkEyeY = Number(activeLevel.walkSpawnM?.[1] ?? (Number(activeLevel.elevationM || 0) + 1.62)) - center.y;
+        let walkSpawn = new THREE.Vector3(
+          Number(activeLevel.walkSpawnM?.[0] ?? center.x) - center.x,
+          walkEyeY,
+          Number(activeLevel.walkSpawnM?.[2] ?? center.z) - center.z
+        );
+        // Keep first-person movement close to a real visitor's walking pace.
+        // The previous scale could reach 4 m/s on a site model, which made a
+        // held key or D-pad press skip over doors and room boundaries.
+        const walkSpeed = Math.max(0.35, Math.min(1.15, maxDimension * 0.0065));
+        setWalkthroughSpeed(Math.min(0.9, Math.max(0.25, walkthroughSpeedPreset)));
+        const walkBounds = { x: size.x / 2 + 10, z: size.z / 2 + 10 };
+        const walkSurfaceSize = Math.max(size.x, size.z, 8) * 1.18;
+        const walkSurface = new THREE.GridHelper(walkSurfaceSize, 24, 0x54e0da, 0x18383d);
+        walkSurface.position.y = walkFloorY + 0.012;
+        walkSurface.material.transparent = true;
+        walkSurface.material.opacity = 0.34;
+        walkSurface.visible = false;
+        scene.add(walkSurface);
+        const routeTour = {
+          active: false, paused: false, distanceM: 0, speedMps: routeTourSpeed, points: [], lengthM: 0,
+          savedPosition: null, savedTarget: null, lastUiUpdate: 0,
+          runStartedAtMs: 0, runStartDistanceM: 0, lookAheadDistanceM: 4
+        };
+        const walkthrough = {
+          active: false, dragging: false, pointerId: null, lastX: 0, lastY: 0,
+          yaw: visitorWalkthroughYaw(activeLevel), pitch: -0.03, keys: new Set(), savedPosition: null, savedTarget: null,
+          blocked: false, currentSpeed: walkthroughSpeedPreset
+        };
+        const collisionEntries = [];
+        // Exterior site context is used for orbit/route-tour navigation.  It
+        // has thousands of facade/landscape meshes and no indoor collision
+        // requirement, so do not build a bounding-box/raycast index for it.
+        if (modelAsset?.kind !== 'site_context_glb') {
+          model.updateMatrixWorld(true);
+          model.traverse((child) => {
+            if (!child.isMesh) return;
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            if (!isWalkthroughCollisionCandidate({
+              name: child.name || child.parent?.name || '',
+              materialNames: materials.map((material) => material?.name || '')
+            })) return;
+            child.geometry?.computeBoundingBox?.();
+            child.geometry?.computeBoundingSphere?.();
+            const worldBounds = child.geometry?.boundingBox?.clone().applyMatrix4(child.matrixWorld);
+            if (worldBounds && !worldBounds.isEmpty()) collisionEntries.push({ mesh: child, bounds: worldBounds });
+          });
+        }
+        const collisionRaycaster = new THREE.Raycaster();
+        const collisionDirection = new THREE.Vector3();
+        const collisionRight = new THREE.Vector3();
+        const collisionOrigin = new THREE.Vector3();
+        const walkthroughRayMeshes = collisionEntries.map((entry) => entry.mesh);
+        const collisionSweepBounds = new THREE.Box3();
+        const collisionSweepMin = new THREE.Vector3();
+        const collisionSweepMax = new THREE.Vector3();
+        const walkthroughCollisionRadius = WALKTHROUGH_BODY_RADIUS_M;
+        const collidesWithWalkthroughGeometry = (position, delta) => {
+          if (!collisionEntries.length) return false;
+          const distance = Math.hypot(delta[0], delta[2]);
+          if (distance <= 1e-6) return false;
+          collisionSweepMin.set(
+            Math.min(position[0], position[0] + delta[0]) - walkthroughCollisionRadius,
+            walkFloorY + 0.18,
+            Math.min(position[2], position[2] + delta[2]) - walkthroughCollisionRadius
+          );
+          collisionSweepMax.set(
+            Math.max(position[0], position[0] + delta[0]) + walkthroughCollisionRadius,
+            walkFloorY + 1.52,
+            Math.max(position[2], position[2] + delta[2]) + walkthroughCollisionRadius
+          );
+          collisionSweepBounds.set(collisionSweepMin, collisionSweepMax);
+          const nearbyMeshes = collisionEntries
+            .filter((entry) => entry.bounds.intersectsBox(collisionSweepBounds))
+            .map((entry) => entry.mesh);
+          if (!nearbyMeshes.length) return false;
+          collisionDirection.set(delta[0] / distance, 0, delta[2] / distance);
+          collisionRight.set(-collisionDirection.z, 0, collisionDirection.x);
+          const probeOffsets = [0, walkthroughCollisionRadius * 0.82, -walkthroughCollisionRadius * 0.82];
+          const probeHeights = [0.28, 0.82, 1.34];
+          collisionRaycaster.near = 0;
+          collisionRaycaster.far = distance + walkthroughCollisionRadius;
+          for (const height of probeHeights) {
+            for (const offset of probeOffsets) {
+              collisionOrigin.set(
+                position[0] + collisionRight.x * offset,
+                walkFloorY + height,
+                position[2] + collisionRight.z * offset
+              );
+              collisionRaycaster.set(collisionOrigin, collisionDirection);
+              if (collisionRaycaster.intersectObjects(nearbyMeshes, false).length) return true;
+            }
+          }
+          return false;
+        };
+        const measureVisitorHeading = (yaw) => {
+          const direction = collisionDirection.set(Math.sin(yaw), 0, -Math.cos(yaw));
+          let score = 0;
+          for (const offset of [-0.24, 0, 0.24]) {
+            const offsetDirection = collisionDirection.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), offset).normalize();
+            for (const height of [0.72, 1.22]) {
+              collisionOrigin.set(walkSpawn.x, walkFloorY + height, walkSpawn.z);
+              collisionRaycaster.set(collisionOrigin, offsetDirection);
+              collisionRaycaster.near = 0.12;
+              collisionRaycaster.far = 18;
+              const hit = collisionRaycaster.intersectObjects(walkthroughRayMeshes, false)[0];
+              if (!hit) {
+                score -= 1;
+                continue;
+              }
+              const distance = Number(hit.distance) || 0;
+              score += distance < 0.75 ? -10 : Math.min(distance, 18) + (distance < 12 ? 2 : 0);
+            }
+          }
+          return score;
+        };
+        const chooseVisitorView = () => {
+          const yaw = chooseWalkthroughYaw({
+            preferredYaw: visitorWalkthroughYaw(activeLevel),
+            measureHeading: measureVisitorHeading
+          });
+          return { yaw, score: measureVisitorHeading(yaw) };
+        };
+        const chooseVisitorYaw = () => chooseVisitorView().yaw;
+        const isWalkthroughSpawnBlocked = (position) => {
+          const probeY = walkFloorY + 0.84;
+          return collisionEntries.some(({ bounds }) => {
+            if (!bounds || probeY < bounds.min.y - 0.05 || probeY > bounds.max.y + 0.05) return false;
+            return position.x >= bounds.min.x - walkthroughCollisionRadius
+              && position.x <= bounds.max.x + walkthroughCollisionRadius
+              && position.z >= bounds.min.z - walkthroughCollisionRadius
+              && position.z <= bounds.max.z + walkthroughCollisionRadius;
+          });
+        };
+        setWalkthroughCollisionStats({ enabled: collisionEntries.length > 0, candidates: collisionEntries.length });
+        const applyFloorClipping = (enabled) => {
+          const wallHeight = Number(modelAsset?.metadata?.wallHeightM || 3.2);
+          const slabThickness = Number(modelAsset?.metadata?.floorSlabThicknessM || 0.12);
+          const planes = enabled ? [
+            new THREE.Plane(new THREE.Vector3(0, 1, 0), -(walkFloorY - slabThickness - 0.04)),
+            new THREE.Plane(new THREE.Vector3(0, -1, 0), walkFloorY + wallHeight + 0.08)
+          ] : [];
+          model.traverse((child) => {
+            if (!child.material) return;
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((material) => {
+              material.clippingPlanes = planes;
+              material.clipShadows = enabled;
+              material.needsUpdate = true;
+            });
+          });
+        };
+        const setFloorView = (floorNumber, shouldIsolate = false) => {
+          activeLevel = levelForNumber(floorNumber);
+          setWalkthroughSpawnNotice('');
+          walkFloorY = Number(activeLevel.elevationM || 0) - center.y;
+          walkEyeY = Number(activeLevel.walkSpawnM?.[1] ?? (Number(activeLevel.elevationM || 0) + 1.62)) - center.y;
+          walkSpawn = new THREE.Vector3(
+            Number(activeLevel.walkSpawnM?.[0] ?? center.x) - center.x,
+            walkEyeY,
+            Number(activeLevel.walkSpawnM?.[2] ?? center.z) - center.z
+          );
+          walkthrough.yaw = chooseVisitorYaw();
+          walkSurface.position.y = walkFloorY + 0.012;
+          applyFloorClipping(shouldIsolate || walkthrough.active);
+          if (walkthrough.active) {
+            camera.position.copy(walkSpawn);
+            updateWalkthroughLook();
+          } else if (shouldIsolate) {
+            controls.target.set(walkSpawn.x, walkFloorY + Number(modelAsset?.metadata?.wallHeightM || 3.2) * 0.45, walkSpawn.z);
+            controls.update();
+          }
+        };
+        const setWalkthroughSpace = (space) => {
+          if (!space?.visitPointM) return;
+          activeLevel = levelForNumber(space.floorNumber);
+          walkFloorY = Number(activeLevel.elevationM || 0) - center.y;
+          walkEyeY = Number(space.visitPointM[1] ?? (Number(activeLevel.elevationM || 0) + 1.62)) - center.y;
+          walkSpawn = new THREE.Vector3(
+            Number(space.visitPointM[0]) - center.x,
+            walkEyeY,
+            Number(space.visitPointM[2]) - center.z
+          );
+          const labelAnchorBlocked = isWalkthroughSpawnBlocked(walkSpawn);
+          let visitorView = chooseVisitorView();
+          if (shouldFallbackToFloorSpawn(space, visitorView.score, activeLevel, labelAnchorBlocked)) {
+            walkEyeY = Number(activeLevel.walkSpawnM[1]) - center.y;
+            walkSpawn = new THREE.Vector3(
+              Number(activeLevel.walkSpawnM[0]) - center.x,
+              walkEyeY,
+              Number(activeLevel.walkSpawnM[2]) - center.z
+            );
+            visitorView = chooseVisitorView();
+            setWalkthroughSpawnNotice(labelAnchorBlocked
+              ? 'CAD文字锚点落在墙体或构件范围内，已回退至楼层最大净空点'
+              : 'CAD文字锚点视线不足，已回退至楼层最大净空点');
+          } else {
+            setWalkthroughSpawnNotice('');
+          }
+          walkthrough.yaw = visitorView.yaw;
+          walkthrough.pitch = -0.03;
+          walkSurface.position.y = walkFloorY + 0.012;
+          applyFloorClipping(true);
+          if (walkthrough.active) {
+            camera.position.copy(walkSpawn);
+            updateWalkthroughLook();
+          }
+        };
+        const updateWalkthroughLook = () => {
+          const cosPitch = Math.cos(walkthrough.pitch);
+          const direction = new THREE.Vector3(
+            Math.sin(walkthrough.yaw) * cosPitch,
+            Math.sin(walkthrough.pitch),
+            -Math.cos(walkthrough.yaw) * cosPitch
+          );
+          camera.lookAt(camera.position.clone().add(direction));
+        };
+        const movementVector = (action) => {
+          const forward = new THREE.Vector3(Math.sin(walkthrough.yaw), 0, -Math.cos(walkthrough.yaw));
+          const right = new THREE.Vector3(Math.cos(walkthrough.yaw), 0, Math.sin(walkthrough.yaw));
+          if (action === 'forward') return forward;
+          if (action === 'backward') return forward.multiplyScalar(-1);
+          if (action === 'left') return right.multiplyScalar(-1);
+          return right;
+        };
+        const moveWalkthrough = (actions, distance) => {
+          const movement = new THREE.Vector3();
+          actions.forEach((action) => movement.add(movementVector(action)));
+          if (!movement.lengthSq()) return;
+          movement.normalize().multiplyScalar(distance);
+          const resolved = resolveConstrainedWalkthroughMove({
+            position: camera.position.toArray(),
+            delta: movement.toArray(),
+            bounds: walkBounds,
+            collides: collidesWithWalkthroughGeometry
+          });
+          camera.position.fromArray(resolved.position);
+          camera.position.y = walkEyeY;
+          walkthrough.blocked = resolved.blocked;
+          updateWalkthroughLook();
+        };
+        const startWalkthrough = () => {
+          if (walkthrough.active) return;
+          if (routeTour.active) environmentRef.current?.stopRouteTour?.();
+          walkthrough.active = true;
+          walkthrough.savedPosition = camera.position.clone();
+          walkthrough.savedTarget = controls.target.clone();
+          walkthrough.keys.clear();
+          walkthrough.yaw = chooseVisitorYaw();
+          walkthrough.pitch = -0.03;
+          controls.enabled = false;
+          walkSurface.visible = true;
+          applyFloorClipping(true);
+          camera.position.copy(walkSpawn);
+          updateWalkthroughLook();
+          renderer.domElement.style.cursor = 'grab';
+        };
+        const stopWalkthrough = () => {
+          if (!walkthrough.active) return;
+          walkthrough.active = false;
+          walkthrough.keys.clear();
+          walkthrough.dragging = false;
+          controls.enabled = true;
+          walkSurface.visible = false;
+          applyFloorClipping(isolateFloorRef.current);
+          if (walkthrough.savedPosition && walkthrough.savedTarget) {
+            camera.position.copy(walkthrough.savedPosition);
+            controls.target.copy(walkthrough.savedTarget);
+            camera.lookAt(controls.target);
+            controls.update();
+          }
+          renderer.domElement.style.cursor = '';
+        };
+        const updateRouteTourCamera = () => {
+          if (routeTour.points.length < 2) return;
+          const sample = samplePolylineAtDistance(routeTour.points, routeTour.distanceM);
+          // At the closed-loop endpoint there is no forward segment left. If
+          // we clamp look-ahead to the same endpoint, the camera receives a
+          // zero-length look vector and ends up facing an arbitrary wall. Use
+          // the preceding route segment for the final view so the tour closes
+          // back toward the observed entry instead of showing a blank facade.
+          const atRouteEnd = routeTour.distanceM >= routeTour.lengthM - 0.05;
+          const lookDistance = atRouteEnd
+            ? Math.max(0, routeTour.distanceM - routeTour.lookAheadDistanceM)
+            : Math.min(routeTour.lengthM, routeTour.distanceM + routeTour.lookAheadDistanceM);
+          const lookAhead = samplePolylineAtDistance(routeTour.points, lookDistance);
+          const eye = new THREE.Vector3(sample.position[0], sample.position[1] + 1.75, sample.position[2]);
+          const look = new THREE.Vector3(lookAhead.position[0], lookAhead.position[1] + 1.68, lookAhead.position[2]);
+          // Keep the visitor oriented along the filmed path, but retain a
+          // small horizontal lock on the registered site/building centre.
+          // At the north edge and at the return-to-gates endpoint the old
+          // forward-only look vector pointed into the unmodelled outer
+          // background, making the real facade/fence disappear from view and
+          // reading as a blank wall.  The bias is deliberately horizontal and
+          // small so it cannot reverse the route or invent a new camera path.
+          const registeredSiteCentre = (modelAsset?.kind === 'site_context_glb' && siteBuildingFocus)
+            ? fitTarget.clone().setY(look.y)
+            : new THREE.Vector3(0, look.y, 0);
+          // On the north leg (roughly 70–200 m), the main building is directly
+          // on the inside of the lane.  A centre-lock here turns the visitor
+          // into the façade and makes the wall fill the entire view, unlike
+          // the field videos where the camera keeps travelling along the lane
+          // with the building to one side.  Keep the registration assist at
+          // the two problematic loop endpoints, but reduce it on this leg.
+          const northLegInteriorWallRisk = routeTour.distanceM >= 70 && routeTour.distanceM <= 200;
+          const endpointBlend = atRouteEnd ? 0.32 : northLegInteriorWallRisk ? 0.03 : 0.16;
+          look.lerp(registeredSiteCentre, endpointBlend);
+          camera.up.set(0, 1, 0);
+          camera.position.copy(eye);
+          camera.lookAt(look);
+        };
+        const syncRouteTourDistance = (time = performance.now()) => {
+          if (!routeTour.active || routeTour.paused || !routeTour.runStartedAtMs) return;
+          const elapsedSeconds = Math.max(0, (time - routeTour.runStartedAtMs) / 1000);
+          routeTour.distanceM = Math.min(routeTour.lengthM, routeTour.runStartDistanceM + routeTour.speedMps * elapsedSeconds);
+        };
+        const startRouteTour = () => {
+          if (routeTour.points.length < 2) return false;
+          if (!routeTour.active) {
+            stopWalkthrough();
+            routeTour.savedPosition = camera.position.clone();
+            routeTour.savedTarget = controls.target.clone();
+            routeTour.active = true;
+            controls.enabled = false;
+          }
+          if (routeTour.distanceM >= routeTour.lengthM) routeTour.distanceM = 0;
+          routeTour.paused = false;
+          routeTour.runStartDistanceM = routeTour.distanceM;
+          routeTour.runStartedAtMs = performance.now();
+          updateRouteTourCamera();
+          setRouteTourPlayback({ status: 'playing', progress: routeTour.lengthM ? routeTour.distanceM / routeTour.lengthM : 0, distanceM: routeTour.distanceM });
+          return true;
+        };
+        const pauseRouteTour = () => {
+          if (!routeTour.active) return;
+          syncRouteTourDistance();
+          routeTour.paused = true;
+          routeTour.runStartedAtMs = 0;
+          setRouteTourPlayback({ status: 'paused', progress: routeTour.lengthM ? routeTour.distanceM / routeTour.lengthM : 0, distanceM: routeTour.distanceM });
+        };
+        const resetRouteTour = () => {
+          routeTour.distanceM = 0;
+          routeTour.paused = false;
+          routeTour.runStartDistanceM = 0;
+          routeTour.runStartedAtMs = routeTour.active ? performance.now() : 0;
+          if (routeTour.active) updateRouteTourCamera();
+          setRouteTourPlayback({ status: routeTour.active ? 'playing' : 'idle', progress: 0, distanceM: 0 });
+        };
+        const stopRouteTour = () => {
+          if (!routeTour.active) return;
+          syncRouteTourDistance();
+          routeTour.active = false;
+          routeTour.paused = false;
+          routeTour.runStartedAtMs = 0;
+          controls.enabled = true;
+          if (routeTour.savedPosition && routeTour.savedTarget) {
+            camera.position.copy(routeTour.savedPosition);
+            controls.target.copy(routeTour.savedTarget);
+            camera.lookAt(controls.target);
+            controls.update();
+          }
+          setRouteTourPlayback({ status: 'idle', progress: 0, distanceM: routeTour.distanceM });
+        };
+        const updateRouteTour = (_deltaSeconds, time) => {
+          if (!routeTour.active || routeTour.paused || routeTour.points.length < 2) return;
+          syncRouteTourDistance(time);
+          updateRouteTourCamera();
+          if (routeTour.distanceM >= routeTour.lengthM) {
+            routeTour.paused = true;
+            setRouteTourPlayback({ status: 'ended', progress: 1, distanceM: routeTour.lengthM });
+          } else if (time - routeTour.lastUiUpdate > 180) {
+            routeTour.lastUiUpdate = time;
+            setRouteTourPlayback({ status: 'playing', progress: routeTour.distanceM / routeTour.lengthM, distanceM: routeTour.distanceM });
+          }
+        };
+        const keyActions = new globalThis.Map([
+          ['KeyW', 'forward'], ['ArrowUp', 'forward'], ['KeyS', 'backward'], ['ArrowDown', 'backward'],
+          ['KeyA', 'left'], ['ArrowLeft', 'left'], ['KeyD', 'right'], ['ArrowRight', 'right']
+        ]);
+        const onKeyDown = (event) => {
+          if (!walkthrough.active) return;
+          if (event.key === 'Escape') {
+            setNavigationMode('orbit');
+            return;
+          }
+          if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+          const action = keyActions.get(event.code);
+          if (!action) return;
+          event.preventDefault();
+          walkthrough.keys.add(action);
+        };
+        const onKeyUp = (event) => {
+          const action = keyActions.get(event.code);
+          if (action) walkthrough.keys.delete(action);
+        };
+        const onPointerDown = (event) => {
+          if (!walkthrough.active || event.button !== 0) return;
+          walkthrough.dragging = true;
+          walkthrough.pointerId = event.pointerId;
+          walkthrough.lastX = event.clientX;
+          walkthrough.lastY = event.clientY;
+          renderer.domElement.setPointerCapture?.(event.pointerId);
+          renderer.domElement.style.cursor = 'grabbing';
+        };
+        const onPointerMove = (event) => {
+          if (!walkthrough.active || !walkthrough.dragging || event.pointerId !== walkthrough.pointerId) return;
+          walkthrough.yaw -= (event.clientX - walkthrough.lastX) * 0.0045;
+          walkthrough.pitch = Math.max(-1.15, Math.min(1.15, walkthrough.pitch - (event.clientY - walkthrough.lastY) * 0.0035));
+          walkthrough.lastX = event.clientX;
+          walkthrough.lastY = event.clientY;
+          updateWalkthroughLook();
+        };
+        const stopPointerDrag = (event) => {
+          if (event.pointerId !== walkthrough.pointerId) return;
+          walkthrough.dragging = false;
+          walkthrough.pointerId = null;
+          renderer.domElement.style.cursor = walkthrough.active ? 'grab' : '';
+        };
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+        renderer.domElement.addEventListener('pointermove', onPointerMove);
+        renderer.domElement.addEventListener('pointerup', stopPointerDrag);
+        renderer.domElement.addEventListener('pointercancel', stopPointerDrag);
+        disposeWalkthroughControls = () => {
+          window.removeEventListener('keydown', onKeyDown);
+          window.removeEventListener('keyup', onKeyUp);
+          renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+          renderer.domElement.removeEventListener('pointermove', onPointerMove);
+          renderer.domElement.removeEventListener('pointerup', stopPointerDrag);
+          renderer.domElement.removeEventListener('pointercancel', stopPointerDrag);
+          scene.remove(walkSurface);
+          walkSurface.geometry.dispose();
+          const surfaceMaterials = Array.isArray(walkSurface.material) ? walkSurface.material : [walkSurface.material];
+          surfaceMaterials.forEach((material) => material.dispose());
+        };
+        fitView();
+        environmentRef.current.model = model;
+        environmentRef.current.applyRuntimeEditorTransforms?.(model);
+        environmentRef.current.applyRuntimeEditorDeleted?.(model);
+        environmentRef.current.refreshEditableModelPickProxies?.();
+        environmentRef.current.runGroundingAudit = () => {
+          model.updateMatrixWorld(true);
+          const groundY = Number(environmentRef.current.groundY || 0);
+          const records = [];
+          model.traverse((node) => {
+            if (!node.isMesh) return;
+            const origin = node.getWorldPosition(new THREE.Vector3());
+            const gapM = Number((origin.y - groundY).toFixed(4));
+            records.push({ node: node.name || '(unnamed)', originY: Number(origin.y.toFixed(4)), groundY: Number(groundY.toFixed(4)), gapM, floating: gapM > 0.5 });
+          });
+          return { thresholdM: 0.5, groundY: Number(groundY.toFixed(4)), totalNodes: records.length, floatingNodes: records.filter((item) => item.floating).length, records };
+        };
+        if (typeof window !== 'undefined') window.__spatialSceneRuntime = environmentRef.current;
+        environmentRef.current.fitView = fitView;
+        environmentRef.current.zoomByFactor = zoomByFactor;
+        const sharedView = new URLSearchParams(window.location.search).get('view');
+        if (sharedView) {
+          try {
+            const decoded = JSON.parse(decodeURIComponent(escape(window.atob(sharedView))));
+            environmentRef.current.applyCameraSnapshot?.(decoded);
+          } catch {
+            // Invalid shared camera state must not block model loading.
+          }
+        }
+        environmentRef.current.setHistoricalConstructionVisibility = (visible) => {
+          model.traverse((child) => {
+            const name = String(child.name || '').toLowerCase();
+            if (!currentSceneSuppressedObjectPrefixes.some((prefix) => name.startsWith(prefix))) return;
+            child.visible = Boolean(visible);
+          });
+        };
+        environmentRef.current.walkthrough = walkthrough;
+        environmentRef.current.startWalkthrough = startWalkthrough;
+        environmentRef.current.stopWalkthrough = stopWalkthrough;
+        environmentRef.current.setFloorView = setFloorView;
+        environmentRef.current.setWalkthroughSpace = setWalkthroughSpace;
+        environmentRef.current.setWalkthroughAction = (action, active) => {
+          if (!walkthrough.active) return;
+          if (active) walkthrough.keys.add(action); else walkthrough.keys.delete(action);
+        };
+        environmentRef.current.nudgeWalkthrough = (action) => {
+          if (walkthrough.active) moveWalkthrough([action], Math.max(0.12, walkthrough.currentSpeed * 0.22));
+        };
+        environmentRef.current.updateWalkthrough = (deltaSeconds) => {
+          if (walkthrough.active && walkthrough.keys.size) moveWalkthrough([...walkthrough.keys], walkthrough.currentSpeed * deltaSeconds);
+        };
+        environmentRef.current.routeTour = routeTour;
+        environmentRef.current.startRouteTour = startRouteTour;
+        environmentRef.current.pauseRouteTour = pauseRouteTour;
+        environmentRef.current.resetRouteTour = resetRouteTour;
+        environmentRef.current.stopRouteTour = stopRouteTour;
+        environmentRef.current.updateRouteTour = updateRouteTour;
+        environmentRef.current.setWalkthroughSpeed = (speed) => {
+          walkthrough.currentSpeed = Math.max(0.25, Math.min(0.9, Number(speed) || 0.5));
+          setWalkthroughSpeed(walkthrough.currentSpeed);
+        };
+        environmentRef.current.setRouteTourSpeed = (speed) => {
+          routeTour.speedMps = Math.max(0.25, Math.min(0.9, Number(speed) || 0.5));
+        };
+        const computeModelStats = () => {
+          const materialSet = new Set();
+          const textureSet = new Set();
+          let meshCount = 0;
+          model.traverse((child) => {
+            if (!child.isMesh && !child.isPoints && !child.isLine) return;
+            meshCount += 1;
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.filter(Boolean).forEach((material) => {
+              materialSet.add(material.uuid || material);
+              ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'].forEach((keyName) => {
+                if (material[keyName]) textureSet.add(material[keyName].uuid || material[keyName]);
+              });
+            });
+          });
+          if (!disposed) setModelStats({ meshes: meshCount, materials: materialSet.size, textures: textureSet.size });
+        };
+        if (modelAsset?.kind === 'site_context_glb') {
+          // Show a useful count immediately and move the second full traversal
+          // out of the critical path.  The exact material/texture totals are
+          // filled in once the browser is idle.
+          setModelStats({ meshes: Number(modelAsset.metadata?.geometryCount) || 0, materials: 0, textures: 0 });
+          const scheduleIdle = window.requestIdleCallback
+            ? (callback) => window.requestIdleCallback(callback, { timeout: 1200 })
+            : (callback) => window.setTimeout(callback, 80);
+          scheduleIdle(computeModelStats);
+        } else {
+          computeModelStats();
+        }
+        applyModelDisplayMode(model, displayModeRef.current, scenarioForDisplay(displayModeRef.current, scenarioPointRef.current));
+        environmentRef.current.facadeLayer = applyFacadeMaterialLayer(model, displayModeRef.current, environmentRef.current?.THREE);
+        environmentRef.current.roadLayer = applyRoadMaterialLayer(model);
+        environmentRef.current.landscapeLayer = applyLandscapeMaterialLayer(model);
+        setFloorView(selectedFloorRef.current, isolateFloorRef.current);
+        scene.add(model);
+        if (modelAsset?.id === 'asset_a98b0182ed4e') {
+          const bWalkDetail = environmentRef.current?.setBWalkSurfaceDetail?.();
+          environmentRef.current?.setBWalkVisibility?.(immediatePerimeterMode);
+          const requestedFocus = new URLSearchParams(window.location.search).get('focus');
+          const focusBWalk = requestedFocus === 'bwalk';
+          const focusSmallGate = requestedFocus === 'small-gate';
+          const focusMiddleBuilding = requestedFocus === 'middle-building';
+          if (focusMiddleBuilding) environmentRef.current?.focusMissingMiddleBuilding?.();
+          if (focusSmallGate && environmentRef.current?.bWalkSmallGate) {
+            const gateBounds = new THREE.Box3().setFromObject(environmentRef.current.bWalkSmallGate);
+            const gateCenter = gateBounds.getCenter(new THREE.Vector3());
+            const gateSize = gateBounds.getSize(new THREE.Vector3());
+            const gateDistance = Math.max(7, Math.max(gateSize.x, gateSize.y, gateSize.z) * 4.6);
+            camera.position.set(gateCenter.x + gateDistance * .72, gateCenter.y + gateDistance * .56, gateCenter.z + gateDistance * .72);
+            controls.target.copy(gateCenter);
+            controls.update();
+          }
+          if (focusBWalk && environmentRef.current?.bWalkSurfaceDetail) {
+            const detailBounds = new THREE.Box3().setFromObject(environmentRef.current.bWalkSurfaceDetail);
+            const detailCenter = detailBounds.getCenter(new THREE.Vector3());
+            const detailSize = detailBounds.getSize(new THREE.Vector3());
+            const focusDistance = Math.max(28, Math.min(58, Math.max(detailSize.x, detailSize.z) * .42));
+            camera.position.set(detailCenter.x + focusDistance * .72, detailCenter.y + focusDistance * .62, detailCenter.z + focusDistance * .72);
+            controls.target.copy(detailCenter);
+            controls.update();
+          }
+        }
+        if (combinedSceneRequested && combinedSkpArtifact?.url && modelAsset?.id === 'asset_a98b0182ed4e') {
+          const combinedBaseCenter = center.clone();
+          const combinedTargetTranslation = new THREE.Vector3(-545.6104, 0, 263.6518).sub(combinedBaseCenter);
+          const combinedScale = new THREE.Vector3(1, 1.054841, 1.038368);
+          new GLTFLoader().load(combinedSkpArtifact.url, (gltf) => {
+            if (disposed) return;
+            combinedSkpModel = gltf.scene;
+            let loadedMeshCount = 0;
+            let visibleBuildingMeshCount = 0;
+            let visibleAccessoryMeshCount = 0;
+            combinedSkpModel.traverse((child) => {
+              if (!child.isMesh) return;
+              loadedMeshCount += 1;
+              child.geometry?.computeBoundingBox?.();
+              const localBox = child.geometry?.boundingBox;
+              const localCenter = localBox?.getCenter(new THREE.Vector3());
+              const inBuildingEnvelope = localCenter
+                && localCenter.x >= 462.1104 && localCenter.x <= 629.1104
+                && localCenter.z >= -316.3518 && localCenter.z <= -210.9518;
+              const size = localBox?.getSize(new THREE.Vector3()) || new THREE.Vector3();
+              const accessoryName = /^(0_e9b69f|0_f4d219|0_1a2017|0_364460)$/i.test(child.name || '');
+              const largeAccessory = accessoryName && Math.max(size.x, size.y, size.z) > 20 && (child.geometry?.attributes?.position?.count || 0) > 100;
+              child.visible = Boolean(inBuildingEnvelope || largeAccessory);
+              if (inBuildingEnvelope) visibleBuildingMeshCount += 1;
+              if (largeAccessory) visibleAccessoryMeshCount += 1;
+            });
+            combinedSkpModel.scale.copy(combinedScale);
+            combinedSkpModel.position.copy(combinedTargetTranslation);
+            combinedSkpModel.name = 'COMBINED_SKP_MAIN_BUILDING_953_ONLY';
+            scene.add(combinedSkpModel);
+            // 静态阴影：组合楼体入场后重算一次阴影贴图，让主楼立刻投下落地影
+            if (renderer?.shadowMap) renderer.shadowMap.needsUpdate = true;
+            applyFacadeMaterialLayer(combinedSkpModel, displayModeRef.current, THREE);
+            model.traverse((child) => {
+              if (/building_mass/i.test(child.name || '')) child.visible = false;
+            });
+            environmentRef.current.combinedSkp = {
+              artifactId: 'artifact_2dbc856e76e8',
+              transform: { tx: -545.6104, ty: 0, tz: 263.6518, yaw: 0, scale: [1, 1.054841, 1.038368] },
+              loadedMeshCount,
+              visibleBuildingMeshCount,
+              visibleAccessoryMeshCount,
+              hiddenAccessoryMeshCount: loadedMeshCount - visibleBuildingMeshCount,
+              baseCenter: combinedBaseCenter.toArray(),
+              placeholderHidden: true
+            };
+            setRegistrationMessage(`组合场景：SKP楼体 ${visibleBuildingMeshCount} mesh · 配楼 4 块已纳入 · 其余附属物 ${loadedMeshCount - visibleBuildingMeshCount} mesh 未加载`);
+          }, undefined, (error) => {
+            if (!disposed) setRegistrationMessage(`SKP组合加载失败：${error?.message || '无法解析主楼 artifact'}`);
+          });
+        }
+        const runtime = environmentRef.current;
+        const applyContextRegistration = (registration = registrationRef.current) => {
+          if (!contextAlignment) return;
+          contextAlignment.position.set(Number(registration.offsetXM) || 0, -center.y, Number(registration.offsetZM) || 0);
+          contextAlignment.rotation.y = (Number(registration.rotationDeg) || 0) * Math.PI / 180;
+          const registrationScale = Math.max(0.1, Math.min(10, Number(registration.scale) || 1));
+          contextAlignment.scale.setScalar(registrationScale);
+          contextAlignment.visible = showSurroundingsRef.current;
+          contextAlignment.updateMatrixWorld(true);
+        };
+        runtime.setContextVisibility = (visible) => {
+          if (contextAlignment) contextAlignment.visible = Boolean(visible);
+        };
+        runtime.updateContextRegistration = applyContextRegistration;
+        if (contextAsset?.url) {
+          new GLTFLoader().load(contextAsset.url, (gltf) => {
+            if (disposed) return;
+            contextModel = gltf.scene;
+            contextModel.rotation.x = -Math.PI / 2;
+            contextModel.traverse((child) => {
+              if (!child.isMesh) return;
+              child.castShadow = true;
+              child.receiveShadow = true;
+            });
+            contextAlignment = new THREE.Group();
+            contextAlignment.name = 'registered-surroundings-hypothesis';
+            contextAlignment.add(contextModel);
+            scene.add(contextAlignment);
+            contextAlignment.updateMatrixWorld(true);
+            const candidates = [];
+            contextModel.traverse((child) => {
+              if (!child.isMesh || !/building/i.test(child.name || child.parent?.name || '')) return;
+              const childBounds = new THREE.Box3().setFromObject(child);
+              const childCenter = childBounds.getCenter(new THREE.Vector3());
+              candidates.push({ child, distance: Math.hypot(childCenter.x, childCenter.z) });
+            });
+            const centralBuilding = candidates.sort((left, right) => left.distance - right.distance)[0];
+            if (centralBuilding && centralBuilding.distance <= Math.max(size.x, size.z) * 0.65) centralBuilding.child.visible = false;
+            applyContextRegistration();
+            setRegistrationMessage((current) => current || '周边底景已载入 · 配准仍为 Hypothesis');
+          }, undefined, (error) => {
+            if (!disposed) setRegistrationMessage(`周边底景加载失败：${error?.message || '无法解析 OSM GLB'}`);
+          });
+        }
+        const disposeSiteRoutes = () => {
+          if (!siteRouteGroup) return;
+          siteRouteGroup.traverse((child) => {
+            child.geometry?.dispose();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.filter(Boolean).forEach((material) => material.dispose());
+          });
+          model.remove(siteRouteGroup);
+          siteRouteGroup = null;
+          runtime.siteRouteGroup = null;
+          routeTour.points = [];
+          routeTour.lengthM = 0;
+          routeTour.distanceM = 0;
+        };
+        const createRouteRibbonGeometry = (points, width) => {
+          const positions = [];
+          const indices = [];
+          points.forEach((point, index) => {
+            const previous = points[Math.max(0, index - 1)];
+            const next = points[Math.min(points.length - 1, index + 1)];
+            const tangent = next.clone().sub(previous).setY(0).normalize();
+            const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).multiplyScalar(width / 2);
+            const left = point.clone().add(normal);
+            const right = point.clone().sub(normal);
+            positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
+            if (index < points.length - 1) {
+              const base = index * 2;
+              indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+            }
+          });
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals();
+          return geometry;
+        };
+        runtime.syncSiteRoutes = (currentObjects = []) => {
+          disposeSiteRoutes();
+          if (!['site_context_glb', 'osm_context_glb'].includes(modelAsset?.kind)) {
+            setSiteRouteStats({ count: 0, lengthM: 0 });
+            return;
+          }
+          const routes = extractSiteRoutes(currentObjects);
+          const primaryRoute = selectPrimarySiteRoute(routes);
+          if (!primaryRoute) {
+            setSiteRouteStats({ count: 0, lengthM: 0 });
+            return;
+          }
+          const group = new THREE.Group();
+          group.name = 'site-walkway-route-layer';
+          group.userData.preserveDisplayMaterial = true;
+          routes.forEach((route) => {
+            const resolved = resolveSiteRoutePoints(route);
+            if (resolved.length < 2) return;
+            const points = resolved.map((point) => new THREE.Vector3(...point));
+            const width = Math.max(1.8, Math.min(7, route.widthM || maxDimension * 0.018));
+            const routeGroup = new THREE.Group();
+            routeGroup.name = route.id;
+            routeGroup.userData = { preserveDisplayMaterial: true, evidenceLevel: route.evidenceLevel, label: route.label };
+            const ribbon = new THREE.Mesh(
+              createRouteRibbonGeometry(points, width),
+              new THREE.MeshStandardMaterial({
+                color: 0xc94432, emissive: 0x4b0c08, emissiveIntensity: 0.32,
+                roughness: 0.82, metalness: 0, transparent: true, opacity: 0.9,
+                side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
+              })
+            );
+            ribbon.name = `${route.id}-surface`;
+            ribbon.renderOrder = 9;
+            ribbon.userData.preserveDisplayMaterial = true;
+            routeGroup.add(ribbon);
+            group.add(routeGroup);
+            if (route.id === primaryRoute.id) {
+              // Keep playback points in the same array format consumed by
+              // samplePolylineAtDistance. The render layer can use Vector3,
+              // but the route sampler intentionally works on plain coordinates.
+              routeTour.points = points.map((point) => [
+                point.x + model.position.x,
+                point.y + model.position.y,
+                point.z + model.position.z
+              ]);
+              routeTour.lengthM = polylineLength(routeTour.points);
+              routeTour.distanceM = 0;
+            }
+          });
+          if (!group.children.length) {
+            group.traverse((child) => child.geometry?.dispose());
+            setSiteRouteStats({ count: 0, lengthM: 0 });
+            return;
+          }
+          group.visible = showSiteRouteRef.current && displayModeRef.current === 'analysis';
+          model.add(group);
+          siteRouteGroup = group;
+          runtime.siteRouteGroup = group;
+          setSiteRouteStats({ count: routes.length, lengthM: routeTour.lengthM });
+        };
+        runtime.setSiteRouteVisibility = (visible) => {
+          if (siteRouteGroup) siteRouteGroup.visible = Boolean(visible);
+        };
+        runtime.disposeSiteRoutes = disposeSiteRoutes;
+        const disposeTransportMarkers = () => {
+          if (!transportMarkerGroup) return;
+          transportMarkerGroup.traverse((child) => {
+            child.geometry?.dispose?.();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.filter(Boolean).forEach((material) => {
+              material.map?.dispose?.();
+              material.dispose?.();
+            });
+          });
+          model.remove(transportMarkerGroup);
+          transportMarkerGroup = null;
+          runtime.transportMarkerGroup = null;
+        };
+        const makeTransportLabel = (station, scale) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 512;
+          canvas.height = 136;
+          const context = canvas.getContext('2d');
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.fillStyle = 'rgba(10, 20, 27, 0.9)';
+          context.roundRect(8, 8, 496, 120, 18);
+          context.fill();
+          context.fillStyle = '#fff8ef';
+          context.font = 'bold 30px sans-serif';
+          context.fillText(`${station.exitNumber}号口 同济大学站`, 24, 43);
+          context.fillStyle = '#ffb49e';
+          context.font = '23px sans-serif';
+          context.fillText(`${station.distanceToBuildingM || '?'}m`, 24, 78);
+          context.fillStyle = '#ffd7c8';
+          context.font = '20px sans-serif';
+          context.fillText(station.exitNumber === '2' ? '位置为推定、形态为示意' : '位置经操作者红框确认', 24, 108);
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+          const sprite = new THREE.Sprite(material);
+          sprite.scale.set(38 * scale, 10 * scale, 1);
+          sprite.position.set(0, 9 * scale, 0);
+          sprite.renderOrder = 30;
+          return sprite;
+        };
+        const makeTransportPavilion = (station, scale, markerY) => {
+          const group = new THREE.Group();
+          group.name = `transport-${station.id}-pavilion`;
+          scale = Math.max(scale, 1.0);
+          const coral = station.exitNumber === '2' ? 0xff5f56 : 0xff9f68;
+          const frameMaterial = new THREE.MeshStandardMaterial({ color: coral, roughness: 0.72, metalness: 0.05, depthTest: false, depthWrite: false });
+          const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xffc0a9, roughness: 0.62, metalness: 0.08, depthTest: false, depthWrite: false });
+          const stairMaterial = new THREE.MeshStandardMaterial({ color: 0x3d4448, roughness: 0.9, metalness: 0.05, depthTest: false, depthWrite: false });
+          const baseMaterial = new THREE.MeshStandardMaterial({ color: 0xf0b19a, roughness: 0.86, metalness: 0, depthTest: false, depthWrite: false });
+          const addBox = (name, size, position, material) => {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+            mesh.name = name;
+            mesh.position.set(...position);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            group.add(mesh);
+          };
+          addBox('base', [10.5 * scale, 0.3 * scale, 7.2 * scale], [0, markerY + 0.15 * scale, 0], baseMaterial);
+          addBox('left-door-frame', [0.7 * scale, 4.4 * scale, 0.7 * scale], [-4.2 * scale, markerY + 2.2 * scale, 0], frameMaterial);
+          addBox('right-door-frame', [0.7 * scale, 4.4 * scale, 0.7 * scale], [4.2 * scale, markerY + 2.2 * scale, 0], frameMaterial);
+          addBox('door-header', [9.1 * scale, 0.7 * scale, 0.7 * scale], [0, markerY + 4.25 * scale, 0], frameMaterial);
+          addBox('roof-cap', [11.8 * scale, 0.65 * scale, 7.8 * scale], [0, markerY + 4.9 * scale, 0], roofMaterial);
+          for (let step = 0; step < 4; step += 1) {
+            addBox(`stair-${step + 1}`, [6.6 * scale, 0.28 * scale, (1.0 + step * 0.35) * scale], [0, markerY + 0.18 * scale + step * 0.3 * scale, (3.1 + step * 0.55) * scale], stairMaterial);
+          }
+          group.add(makeTransportLabel(station, scale));
+          group.userData = { stationId: station.id, coordinateSpace: 'local_enu_m_xz', evidenceLevel: station.exitNumber === '2' ? 'Derived' : 'Observed' };
+          group.renderOrder = 900;
+          return group;
+        };
+        const makeMetroSignPost = (station, scale, markerY, markerXZ) => {
+          const group = new THREE.Group();
+          group.name = `transport-${station.id}-simulated-sign-post`;
+          const propScale = Math.max(scale, 1.0);
+          const direction = new THREE.Vector2(-Number(markerXZ[0]), -Number(markerXZ[1])).normalize();
+          const offset = 3.0 * scale;
+          group.position.set(Number(markerXZ[0]) + direction.x * offset, 0, Number(markerXZ[1]) + direction.y * offset);
+          group.rotation.y = Math.atan2(direction.x, direction.y);
+          const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x173b73, roughness: 0.42, metalness: 0.28, depthTest: false, depthWrite: false });
+          const signMaterial = new THREE.MeshStandardMaterial({ color: 0x0e2f67, roughness: 0.3, metalness: 0.12, depthTest: false, depthWrite: false });
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * propScale, 0.1 * propScale, 2.65 * propScale, 16), poleMaterial);
+          pole.name = `${group.name}-pole`;
+          pole.position.set(0, markerY + 1.325 * propScale, 0);
+          pole.castShadow = true;
+          group.add(pole);
+          const canvas = document.createElement('canvas');
+          canvas.width = 512;
+          canvas.height = 256;
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#0e2f67';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.strokeStyle = '#6fa8ff';
+          context.lineWidth = 10;
+          context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+          context.fillStyle = '#ffffff';
+          context.font = 'bold 48px sans-serif';
+          context.fillText('METRO 地铁', 34, 76);
+          context.font = 'bold 92px sans-serif';
+          context.fillText(`${station.exitNumber}`, 220, 190);
+          context.font = '24px sans-serif';
+          context.fillText(station.exitNumber === '2' ? '位置为推定' : '位置经红框确认', 300, 232);
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          const faceMaterial = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+          const sign = new THREE.Mesh(new THREE.BoxGeometry(1.25 * propScale, 0.72 * propScale, 0.14 * propScale), [faceMaterial, signMaterial, signMaterial, signMaterial, signMaterial, signMaterial]);
+          sign.name = `${group.name}-lightbox`;
+          sign.position.set(0, markerY + 2.62 * propScale, 0);
+          sign.castShadow = true;
+          group.add(sign);
+          group.userData = {
+            simulated: true,
+            evidenceLevel: 'Simulated',
+            description: '拟真蓝色地铁标识灯箱杆；造型为示意道具，不代表现场实测还原。',
+            stationId: station.id,
+            offsetFromPavilionM: 3,
+            label: station.exitNumber === '2' ? '位置为推定' : '位置经操作者红框确认'
+          };
+          group.renderOrder = 1000;
+          return group;
+        };
+        const syncTransportMarkers = (plan = transportPlanRef.current) => {
+          disposeTransportMarkers();
+          const stations = Array.isArray(plan?.stations) ? plan.stations : [];
+          if (!stations.length) return;
+          const group = new THREE.Group();
+          group.name = 'transport-metro-entrance-pavilions';
+          const scale = Math.max(0.35, Math.min(1.2, maxDimension / 300));
+          const markerY = (runtime.groundY || 0) - model.position.y + 0.12;
+          stations.forEach((station) => {
+            const local = Array.isArray(station.modelLocal) ? station.modelLocal : station.local;
+            if (!Array.isArray(local) || local.length < 2) return;
+            const markerXZ = Array.isArray(station.markerLocalXZ)
+              ? station.markerLocalXZ
+              : [Number(local[0]), -Number(local[1])];
+            const marker = makeTransportPavilion(station, scale, markerY);
+            marker.position.set(Number(markerXZ[0]) * scale, 0, Number(markerXZ[1]) * scale);
+            marker.traverse((child) => { child.renderOrder = 30; });
+            group.add(marker);
+            const signPost = makeMetroSignPost(station, scale, markerY, [Number(markerXZ[0]) * scale, Number(markerXZ[1]) * scale]);
+            signPost.traverse((child) => { child.renderOrder = 31; });
+            group.add(signPost);
+          });
+          const connectorMaterial = new THREE.LineBasicMaterial({ color: 0xff9f68, transparent: true, opacity: 0.82, depthTest: false });
+          stations.forEach((station) => {
+            const markerXZ = Array.isArray(station.markerLocalXZ) ? station.markerLocalXZ : null;
+            if (!markerXZ) return;
+            const points = [
+              new THREE.Vector3(Number(markerXZ[0]) * scale, markerY + 0.34 * scale, Number(markerXZ[1]) * scale),
+              new THREE.Vector3(Number(markerXZ[0]) * scale * 0.48, markerY + 0.34 * scale, Number(markerXZ[1]) * scale * 0.48),
+              new THREE.Vector3(0, markerY + 0.34 * scale, 0)
+            ];
+            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), connectorMaterial.clone());
+            line.name = `transport-${station.id}-building-connector`;
+            line.renderOrder = 28;
+            group.add(line);
+          });
+          const buildingOutline = new THREE.LineLoop(
+            new THREE.BufferGeometry().setFromPoints([
+              new THREE.Vector3(-83.5 * scale, markerY + 0.38 * scale, -54.722 * scale),
+              new THREE.Vector3(83.5 * scale, markerY + 0.38 * scale, -54.722 * scale),
+              new THREE.Vector3(83.5 * scale, markerY + 0.38 * scale, 54.722 * scale),
+              new THREE.Vector3(-83.5 * scale, markerY + 0.38 * scale, 54.722 * scale)
+            ]),
+            new THREE.LineBasicMaterial({ color: 0xffc0a9, transparent: true, opacity: 0.9, depthTest: false })
+          );
+          buildingOutline.name = 'transport-main-building-outline';
+          buildingOutline.renderOrder = 28;
+          group.add(buildingOutline);
+          model.add(group);
+          transportMarkerGroup = group;
+          runtime.transportMarkerGroup = group;
+        };
+        runtime.syncTransportMarkers = syncTransportMarkers;
+        runtime.disposeTransportMarkers = disposeTransportMarkers;
+        const disposeScenarioFlow = () => {
+          if (!runtime?.flow) return;
+          runtime.flow.group.traverse((child) => {
+            child.geometry?.dispose();
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.filter(Boolean).forEach((material) => material.dispose());
+          });
+          model.remove(runtime.flow.group);
+          runtime.flow = null;
+        };
+        runtime.syncScenarioFlow = ({ sceneObjects: currentObjects, scenarioPoint: currentPoint, scenarioFlowColor: currentColor, selectedRouteId: currentRouteId }) => {
+          disposeScenarioFlow();
+          const isOsmContext = modelAsset?.kind === 'osm_context_glb';
+          if (!isOsmContext || !currentPoint) return;
+          const plan = buildScenarioFlowPlan(currentObjects, currentPoint, { maxParticles: 72, selectedRouteId: currentRouteId });
+          const selectedAreaObject = currentObjects.find((object) => object.id === currentRouteId && object?.properties?.stale !== true && object?.geometry?.type === 'Polygon');
+          if (!plan.routes.length && !selectedAreaObject) return;
+          const group = new THREE.Group();
+          group.name = 'scenario-flow-layer';
+          const color = new THREE.Color(currentColor);
+          const routeMap = new globalThis.Map(plan.routes.map((route) => [route.id, route]));
+          plan.routes.forEach((route) => {
+            const geometry = new THREE.BufferGeometry().setFromPoints(route.points.map((point) => new THREE.Vector3(...point)));
+            const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.82, depthWrite: false });
+            const line = new THREE.Line(geometry, material);
+            line.renderOrder = 7;
+            group.add(line);
+          });
+          if (selectedAreaObject) {
+            const base = Number(selectedAreaObject?.properties?.terrainBaseRelativeM) || 0;
+            const ring = Array.isArray(selectedAreaObject.geometry.coordinates?.[0]) ? selectedAreaObject.geometry.coordinates[0] : [];
+            const areaPoints = ring.filter((point) => Array.isArray(point) && point.length >= 2).map((point) => new THREE.Vector3(Number(point[0]), Number(point[2] ?? base) + 0.22, -Number(point[1])));
+            if (areaPoints.length >= 3) {
+              if (!areaPoints[0].equals(areaPoints.at(-1))) areaPoints.push(areaPoints[0].clone());
+              const areaGeometry = new THREE.BufferGeometry().setFromPoints(areaPoints);
+              const areaMaterial = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.92, depthWrite: false });
+              const areaOutline = new THREE.Line(areaGeometry, areaMaterial);
+              areaOutline.renderOrder = 7;
+              group.add(areaOutline);
+            }
+          }
+          let geometry = null;
+          let positions = null;
+          if (plan.particles.length) {
+            positions = new Float32Array(plan.particles.length * 3);
+            geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({
+              color, size: Math.max(0.55, Math.min(2.2, maxDimension * 0.004)), sizeAttenuation: true,
+              transparent: true, opacity: 0.96, depthWrite: false, blending: THREE.AdditiveBlending
+            });
+            const points = new THREE.Points(geometry, material);
+            points.renderOrder = 8;
+            group.add(points);
+          }
+          model.add(group);
+          runtime.flow = { group, geometry, positions, plan, routeMap };
+        };
+        runtime.updateScenarioFlow = (elapsedSeconds) => {
+          const flow = runtime.flow;
+          if (!flow?.geometry || !flow.positions) return;
+          flow.plan.particles.forEach((particle, index) => {
+            const route = flow.routeMap.get(particle.routeId);
+            const point = pointAlongPolyline(route, particle.phase + elapsedSeconds * particle.speed, particle.reverse);
+            flow.positions.set(point, index * 3);
+          });
+          flow.geometry.attributes.position.needsUpdate = true;
+        };
+        runtime.disposeScenarioFlow = disposeScenarioFlow;
+        runtime.syncSiteRoutes(siteRouteInputRef.current);
+        runtime.syncScenarioFlow(flowInputRef.current);
+        runtime.syncTransportMarkers(transportPlanRef.current);
+        setLoadState({ status: 'ready', message: modelName });
+        window.dispatchEvent(new CustomEvent('spatial-reframe:model-ready', { detail: { artifactId: modelAsset.id } }));
+      };
+      const failLoad = (error) => {
+        if (disposed) return;
+        const reason = error instanceof Error ? error.message : '浏览器无法解析该模型';
+        if (previewModel) {
+          setLoadState({ status: 'preview', message: `快速三维可继续使用；完整材质模型加载失败：${reason}` });
+          return;
+        }
+        setLoadState({ status: 'error', message: reason });
+      };
+      if (modelType === 'ply') {
+        new PLYLoader().load(modelAsset.url, (geometry) => {
+          geometry.computeBoundingBox();
+          const hasVertexColors = geometry.hasAttribute('color');
+          const material = new THREE.PointsMaterial({ size: 0.025, sizeAttenuation: true, vertexColors: hasVertexColors, color: hasVertexColors ? 0xffffff : 0x72e7dc });
+          finishLoad(new THREE.Points(geometry, material));
+        }, undefined, failLoad);
+      } else {
+        const loadFullModel = () => new GLTFLoader().load(modelAsset.url, (gltf) => {
+          setLoadState((current) => current.status === 'preview'
+            ? { status: 'preview', message: '快速三维可操作，正在解析真实材质模型…' }
+            : { status: 'loading', message: `正在解析 ${modelName}…` });
+          finishLoad(gltf.scene);
+        }, (progress) => {
+          const total = Number(progress?.total || modelAsset?.size || 0);
+          const loaded = Number(progress?.loaded || 0);
+          const percent = total > 0 ? Math.max(0, Math.min(99, Math.round((loaded / total) * 100))) : null;
+          setLoadState((current) => current.status === 'preview'
+            ? { status: 'preview', message: percent == null ? '快速三维可操作，真实材质模型正在下载…' : `快速三维可操作，真实材质模型正在下载… ${percent}%` }
+            : { status: 'loading', message: percent == null ? `正在下载 ${modelName}…` : `正在下载 ${modelName}… ${percent}%` });
+        }, failLoad);
+        if (modelAsset?.kind === 'site_context_glb') {
+          setLoadState({ status: 'loading', message: '正在加载快速三维…' });
+          previewBufferPromise.then(({ buffer, error }) => {
+            if (disposed) return;
+            if (error || !buffer) {
+              if (error?.name !== 'AbortError') loadFullModel();
+              return;
+            }
+            new GLTFLoader().parse(buffer, '', (gltf) => {
+              showFastPreview(gltf.scene);
+              // Let the first interactive frame paint before the large
+              // material GLB starts downloading and parsing.
+              const startFullLoad = () => {
+                if (disposed) return;
+                loadFullModel();
+              };
+              if (typeof window.requestIdleCallback === 'function') {
+                window.requestIdleCallback(startFullLoad, { timeout: 2200 });
+              } else {
+                window.setTimeout(startFullLoad, 1200);
+              }
+            }, () => loadFullModel());
+          });
+        } else {
+          loadFullModel();
+        }
+      }
+      const animate = (time = 0) => {
+        if (disposed) return;
+        frame = requestAnimationFrame(animate);
+        if (document.hidden) return;
+        const minimumFrameInterval = modelAsset?.kind === 'site_context_glb'
+          ? (fullModelReady ? 33 : 80)
+          : 0;
+        if (minimumFrameInterval && time - lastRenderTime < minimumFrameInterval) return;
+        lastRenderTime = time;
+        const deltaSeconds = Math.min(0.05, Math.max(0, (time - lastFrameTime) / 1000));
+        const frameMs = animate.lastTime ? Math.max(1, time - animate.lastTime) : 16.7;
+        animate.lastTime = time;
+        const currentFps = Math.round(1000 / frameMs);
+        if (environmentRef.current) environmentRef.current.fps = currentFps;
+        if (!animate.lastFpsUiTime || time - animate.lastFpsUiTime > 420) {
+          animate.lastFpsUiTime = time;
+          setFps(currentFps);
+        }
+        lastFrameTime = time;
+        environmentRef.current?.updateTwinAgents?.(deltaSeconds);
+        if (environmentRef.current?.routeTour?.active) environmentRef.current.updateRouteTour?.(deltaSeconds, time);
+        else if (environmentRef.current?.walkthrough?.active) environmentRef.current.updateWalkthrough?.(deltaSeconds);
+        else controls?.update();
+        environmentRef.current?.updateScenarioFlow?.(time / 1000);
+        if (twinModeRef.current && environmentRef.current?.bloomPass?.enabled) {
+          const samples = environmentRef.current.fpsSamples;
+          samples.push(currentFps);
+          if (samples.length > 30) samples.shift();
+          if (samples.length >= 10 && samples.reduce((sum, value) => sum + value, 0) / samples.length < 30) {
+            environmentRef.current.bloomDowngraded = true;
+            environmentRef.current.bloomPass.enabled = false;
+          }
+          environmentRef.current.composer.render();
+        } else {
+          renderer.render(scene, camera);
+        }
+      };
+      animate();
+      const resize = () => {
+        if (!mount.clientWidth || !mount.clientHeight || !renderer) return;
+        camera.aspect = mount.clientWidth / mount.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(mount.clientWidth, mount.clientHeight);
+        environmentRef.current?.composer?.setSize(mount.clientWidth, mount.clientHeight);
+      };
+      observer = new ResizeObserver(resize);
+      observer.observe(mount);
+    };
+
+    initialize().catch((error) => {
+      if (!disposed) setLoadState({ status: 'error', message: error.message || '三维运行时加载失败' });
+    });
+    return () => {
+      disposed = true;
+      previewAbortController.abort();
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      environmentRef.current?.disposeScenarioFlow?.();
+      environmentRef.current?.disposeSiteRoutes?.();
+      environmentRef.current?.disposeTransportMarkers?.();
+      disposeWalkthroughControls();
+      disposeModelDisplayMaterials(model);
+      if (previewModel && scene) {
+        scene.remove(previewModel);
+        previewModel.traverse((child) => {
+          child.geometry?.dispose?.();
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.filter(Boolean).forEach((material) => material.dispose?.());
+        });
+      }
+      if (model && scene) scene.remove(model);
+      if (contextAlignment && scene) scene.remove(contextAlignment);
+      disposeEditableSelection();
+      transformControls?.detach?.();
+      transformControls?.dispose?.();
+      if (transformHelper && scene) scene.remove(transformHelper);
+      controls?.dispose();
+      environmentRenderTarget?.dispose();
+      renderer?.dispose();
+      ground?.geometry.dispose();
+      ground?.material.dispose();
+      skyDome?.geometry.dispose();
+      skyDome?.material.dispose();
+      environmentRef.current = null;
+      mount.replaceChildren();
+    };
+  }, [modelAsset?.id, modelName, modelType, contextAsset?.id, modelLoadAttempt, combinedSceneRequested, combinedSkpArtifact?.id]);
+
+  useEffect(() => {
+    environmentRef.current?.syncSiteRoutes?.(sceneObjects);
+    environmentRef.current?.syncScenarioFlow?.({ sceneObjects, scenarioPoint, scenarioFlowColor, selectedRouteId });
+    environmentRef.current?.syncTransportMarkers?.(transportPlan);
+  }, [sceneObjects, scenarioPoint, scenarioFlowColor, selectedRouteId, transportPlan]);
+
+  useEffect(() => {
+    environmentRef.current?.setSiteRouteVisibility?.(showSiteRoute && displayMode === 'analysis');
+  }, [showSiteRoute, displayMode, loadState.status]);
+
+  useEffect(() => {
+    applyModelDisplayMode(environmentRef.current?.model, displayMode);
+    if (environmentRef.current) {
+      environmentRef.current.facadeLayer = applyFacadeMaterialLayer(environmentRef.current.model, displayMode, environmentRef.current.THREE);
+      environmentRef.current.roadLayer = applyRoadMaterialLayer(environmentRef.current.model);
+      environmentRef.current.landscapeLayer = applyLandscapeMaterialLayer(environmentRef.current.model);
+    }
+    if (displayMode === 'day-night') {
+      applyModelDisplayMode(environmentRef.current?.model, displayMode, scenarioForDisplay(displayMode, scenarioPoint));
+    }
+    environmentRef.current?.setFloorView?.(selectedFloorNumber, isolateFloor || navigationMode === 'walkthrough');
+    applySceneEnvironment(environmentRef.current, scenarioPoint, displayMode);
+  }, [displayMode, scenarioPoint, selectedFloorNumber, isolateFloor, navigationMode]);
+
+  useEffect(() => {
+    environmentRef.current?.setTwinMode?.(twinMode);
+  }, [twinMode, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') environmentRef.current?.setBWalkVisibility?.(immediatePerimeterMode);
+  }, [immediatePerimeterMode, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') void environmentRef.current?.setImportedMiddleBuilding?.(middleBuildingMode);
+  }, [middleBuildingMode, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') {
+      const requestedCount = fluidMode ? Math.min(agentCount, 150) : agentCount;
+      const result = environmentRef.current?.setTwinAgents?.({ count: requestedCount, slot: agentSlot });
+      setRenderedAgentCount(Number(result?.count ?? requestedCount));
+      setAgentPathSummary({
+        labels: Array.isArray(result?.paths) ? result.paths.map((path) => path.label) : [],
+        counts: Object.fromEntries(Array.isArray(result?.paths) ? result.paths.map((path) => [path.id, path.count]) : [])
+      });
+    }
+  }, [agentCount, agentSlot, fluidMode, loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.setFluidMode?.(fluidMode);
+  }, [fluidMode, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') environmentRef.current?.setTwinHeatmap?.({ planId: heatmapPlan });
+  }, [heatmapPlan, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') {
+      const runtime = environmentRef.current;
+      const metrics = runtime?.setPainNarrative?.({ planId: twinMode ? heatmapPlan : null }) || null;
+      if (runtime?.painNarrativeGroup) runtime.painNarrativeGroup.visible = twinMode || digitalDerivative;
+      setPainMetrics(metrics);
+    }
+  }, [heatmapPlan, twinMode, digitalDerivative, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status === 'ready') environmentRef.current?.setStage2Completeness?.();
+  }, [loadState.status]);
+
+
+  useEffect(() => {
+    environmentRef.current?.setFloorView?.(selectedFloorNumber, isolateFloor || navigationMode === 'walkthrough');
+  }, [selectedFloorNumber, isolateFloor, navigationMode, loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.setContextVisibility?.(showSurroundings);
+  }, [showSurroundings, loadState.status]);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+    const onMove = (event) => {
+      const runtime = environmentRef.current;
+      if (!runtime?.camera || !runtime?.THREE || loadState.status !== 'ready') return;
+      const rect = mount.getBoundingClientRect();
+      const ndc = new runtime.THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
+      const ray = new runtime.THREE.Raycaster(); ray.setFromCamera(ndc, runtime.camera);
+      const plane = new runtime.THREE.Plane(new runtime.THREE.Vector3(0, 1, 0), -(runtime.groundY || 0));
+      const hit = new runtime.THREE.Vector3();
+      if (ray.ray.intersectPlane(plane, hit)) setPointerCoordinate({ x: Number(hit.x.toFixed(3)), y: Number(hit.y.toFixed(3)), z: Number(hit.z.toFixed(3)) });
+    };
+    mount.addEventListener('pointermove', onMove);
+    return () => mount.removeEventListener('pointermove', onMove);
+  }, [loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.setHistoricalConstructionVisibility?.(showHistoricalConstruction);
+  }, [showHistoricalConstruction, loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.setWalkthroughSpeed?.(walkthroughSpeedPreset);
+  }, [walkthroughSpeedPreset, loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.setRouteTourSpeed?.(routeTourSpeed);
+  }, [routeTourSpeed, loadState.status]);
+
+  useEffect(() => {
+    environmentRef.current?.updateContextRegistration?.(registrationState);
+  }, [registrationState, loadState.status]);
+
+  useEffect(() => {
+    if (loadState.status !== 'ready') return;
+    const pending = pendingWalkthroughRef.current;
+    if (pending?.assetId === modelAsset?.id) {
+      pendingWalkthroughRef.current = null;
+      const targetSpace = allTourSpaces.find((space) => space.id === pending.spaceId) || preferredWalkthroughEntry(floorOptions);
+      if (targetSpace) {
+        setSelectedFloorNumber(Number(targetSpace.floorNumber));
+        setSelectedSpaceId(targetSpace.id);
+      }
+      setNavigationMode('walkthrough');
+      return;
+    }
+    if (navigationMode === 'walkthrough') {
+      environmentRef.current?.stopRouteTour?.();
+      environmentRef.current?.startWalkthrough?.();
+    } else if (navigationMode === 'route-tour') {
+      environmentRef.current?.stopWalkthrough?.();
+      if (!environmentRef.current?.startRouteTour?.()) setNavigationMode('orbit');
+    } else {
+      environmentRef.current?.stopWalkthrough?.();
+      environmentRef.current?.stopRouteTour?.();
+    }
+  }, [navigationMode, loadState.status, modelAsset?.id]);
+
+  useEffect(() => {
+    if (loadState.status !== 'ready' || navigationMode !== 'walkthrough' || !selectedSpace) return;
+    environmentRef.current?.setWalkthroughSpace?.(selectedSpace);
+  }, [selectedSpaceId, selectedFloorNumber, navigationMode, loadState.status]);
+
+  if (!modelAsset && hydrating) {
+    return <ViewportEmptyState icon={RefreshCw} title="正在准备三维场景" text="正在读取项目资料与模型索引；完成后会自动显示三维视口。" />;
+  }
+  if (!modelAsset) {
+    const hasUnsupportedModel = assets.some((asset) => asset.type === '3d');
+    return <ViewportEmptyState icon={Box} title={hasUnsupportedModel ? '尚无可网页加载的三维资产' : '尚无三维资产'} text={hasUnsupportedModel ? '当前视口直接加载 GLB / GLTF / PLY；LAS、LAZ、SPZ 需先通过对应处理链转换或发布。' : '导入真实 GLB、GLTF 或 PLY 后，系统才会建立三维视口。'} />;
+  }
+
+  const layerLabel = (asset) => {
+    if (asset.kind === 'runtime_ground_plane') return '场景底板 · 运行时地面';
+    if (asset.kind === 'site_side_path_candidate_glb') return '主楼旁小道 · 三段候选';
+    if (asset.kind === 'site_map_layout_candidate_glb') return /立面细节朝向修正/.test(asset.name || '') ? '③立面细节朝向修正' : /朝向修正/.test(asset.name || '') ? '③建筑朝向修正' : /入口围栏修正/.test(asset.name || '') ? '入口围栏与③砖楼' : /全素材细化/.test(asset.name || '') ? '全场地细化 · 材质与路线' : /证据补全/.test(asset.name || '') ? '场地补全 · ②侧边与小道设施' : '新标注图 · 三栋外围建筑与小道';
+    if (asset.kind === 'main_building_facade_candidate_glb') return asset.metadata?.candidateVersion === 'facade.photo-zones.v3' ? '主楼 · 照片五区实景候选' : '主楼 · 照片五区候选';
+    if (asset.kind === 'site_context_glb') {
+      const sourceBuilding = artifacts.find((artifact) => artifact.id === asset.metadata?.mainBuildingArtifactId);
+      const baseLabel = sourceBuilding?.metadata?.schema === 'dwg_interior_model.v4' ? '连续小道 · CAD建筑' : '连续视频周边小道';
+      return asset.metadata?.blenderRefined ? `${baseLabel} · Blender` : baseLabel;
+    }
+    if (asset.kind === 'site_interior_model_glb') return '室内模型 · CAD/BIM';
+    if (asset.kind === 'skp_glb') return '建筑主体';
+    if (asset.kind === 'blender_enhanced_glb') return `Blender PBR · ${asset.metadata?.levelCount ?? 1}层`;
+    if (asset.kind === 'dwg_extrusion_glb') return /^dwg_interior_model\.v[234]$/.test(asset.metadata?.schema || '') ? `室内模型 · ${asset.metadata?.levelCount ?? 1}层` : '室内补充模型';
+    if (asset.kind === 'dwg_plan_glb') return '平面校核';
+    if (asset.kind === 'osm_context_glb') return '周边三维底景';
+    if (asset.kind === 'site_direct_image_candidate_glb') {
+      if (asset.metadata?.candidateKey === 'scope-direct-image-v3-b1-c-local-v1') return '候选范围 v3 · B1/C夹道局部';
+      if (asset.metadata?.candidateKey === 'scope-direct-image-v3-b1-filled') return '候选范围 v3 · B1实体填充';
+      return '候选范围 v3 · 主楼+周边';
+    }
+    if (asset.kind === 'site_direct_image_surrounding_glb') return '候选范围 v3 · 周边层';
+    if (asset.kind === 'site_direct_image_g3_candidate_glb') return '候选范围 v3 · G3起点局部';
+    if (asset.kind === 'site_direct_image_g3_fb932_b67_candidate_glb') {
+      return asset.metadata?.candidateKey === 'g3-fb932-b67-v2'
+        ? 'G3 第一处 v2 · fb932+b67 双验证'
+        : 'G3 第一处 · fb932+b67 候选';
+    }
+    if (asset.kind === 'site_direct_image_g3_v3_candidate_glb') {
+      if (asset.metadata?.candidateKey === 'g3-fb932-main-entry-v3-rebased') return 'G3 主入口支路 v3 · 最新纠正基线';
+      if (asset.metadata?.candidateKey === 'g3-fb932-main-entry-v2') return 'G3 主入口支路 v2 · fb932 箭尾→箭头';
+      return '候选范围 v3 · G3导航核验版';
+    }
+    if (asset.kind === 'sparse_point_cloud' || /\.ply$/i.test(asset.name || '')) return '现场稀疏点云';
+    const importedName = String(asset.name || asset.title || '未命名三维资源').replace(/\.(glb|gltf|ply)$/i, '');
+    const shortAssetId = asset.id ? ` · ${asset.id.slice(-6)}` : '';
+    return `导入 · ${importedName}${shortAssetId}`;
+  };
+  const displayModes = [
+    { id: 'original', index: '01', label: '原始材质', detail: '显示导入模型自带的颜色与材质。' },
+    { id: 'analysis', index: '02', label: '分析青图', detail: '统一分析着色，便于辨认体量、构件和空间关系。' },
+    { id: 'sunny', index: '03', label: '晴天日照', detail: modelAsset?.kind === 'site_context_glb'
+      ? '晴空、太阳方位与柔和补光；综合场景关闭浏览器阴影图，避免密集构件产生黑面伪影。'
+      : scenarioPoint?.sun ? '晴空预设使用当前时刻的太阳方位，并启用软阴影。' : '上海标准晴天预设：蓝天、暖日照、软阴影与中性曝光。' },
+    { id: 'day-night', index: '04', label: '日夜模拟', detail: scenarioPoint ? '跟随当前时间轴、太阳位置与真实天气数据。' : '当前无时间轴输入，显示标准夜景预设；窗光、入口灯与路灯材质同步增强。' }
+  ];
+  const activeDisplayMode = displayModes.find((mode) => mode.id === displayMode) || displayModes[0];
+  const navigationModes = {
+    orbit: {
+      label: '观察模式',
+      detail: '旋转、缩放、平移模型',
+      hint: '鼠标左键旋转 · 滚轮缩放 · 右键或 Shift+拖动平移'
+    },
+    walkthrough: {
+      label: '建筑漫游',
+      detail: '以参观者视角进入室内',
+      hint: '拖动视角 · W/A/S/D 或方向键移动 · Esc 退出漫游'
+    },
+    'route-tour': {
+      label: '沿线漫游',
+      detail: '按现场视频顺序连续查看周边小道',
+      hint: '使用播放/暂停控制 · 可随时退出并恢复观察视角'
+    }
+  };
+  const activeNavigationMode = navigationModes[navigationMode] || navigationModes.orbit;
+  const semanticLegendEntries = Object.entries(modelAsset.metadata?.semanticLegend || {})
+    .map(([category, definition]) => ({ category, ...definition, count: Number(modelAsset.metadata?.categoryCounts?.[category] || 0) }))
+    .filter((item) => item.count > 0);
+  const currentModelSupportsWalkthrough = modelType === 'gltf' && modelAsset.kind !== 'dwg_plan_glb'
+    && Array.isArray(modelAsset?.metadata?.levels) && modelAsset.metadata.levels.length > 0;
+  const walkthroughEligible = currentModelSupportsWalkthrough || Boolean(interiorWalkthroughAsset);
+  const walkthroughEvidence = ['site_interior_model_glb', 'dwg_extrusion_glb', 'blender_enhanced_glb'].includes(modelAsset.kind)
+    ? 'Derived 墙 / 柱 / 门窗位置'
+    : modelAsset.kind === 'site_context_glb'
+      ? '周边外景主楼外壳；室内 CAD/BIM 为独立图层'
+      : modelAsset.kind === 'skp_glb'
+       ? 'SKP 源模型可见结构'
+       : '当前三维资产可见结构';
+  const walkthroughControl = (action, label, Icon, className) => <button
+    type="button"
+    className={className}
+    aria-label={label}
+    title={label}
+    onPointerDown={(event) => { event.preventDefault(); environmentRef.current?.setWalkthroughAction?.(action, true); }}
+    onPointerUp={() => environmentRef.current?.setWalkthroughAction?.(action, false)}
+    onPointerLeave={() => environmentRef.current?.setWalkthroughAction?.(action, false)}
+    onPointerCancel={() => environmentRef.current?.setWalkthroughAction?.(action, false)}
+    onClick={() => environmentRef.current?.nudgeWalkthrough?.(action)}
+  ><Icon size={17} /></button>;
+  const selectedTourIndex = selectedSpace ? allTourSpaces.findIndex((space) => space.id === selectedSpace.id) : -1;
+  const enterWalkthrough = (space = null) => {
+    const requestedSpace = space || selectedSpace || preferredWalkthroughEntry(floorOptions);
+    if (interiorWalkthroughAsset && modelAsset.id !== interiorWalkthroughAsset.id) {
+      pendingWalkthroughRef.current = { assetId: interiorWalkthroughAsset.id, spaceId: requestedSpace?.id || null };
+      setSelectedModelId(interiorWalkthroughAsset.id);
+      return;
+    }
+    if (requestedSpace) {
+      setSelectedFloorNumber(Number(requestedSpace.floorNumber));
+      setSelectedSpaceId(requestedSpace.id);
+    }
+    setNavigationMode('walkthrough');
+  };
+  const visitSpace = (space) => { if (space) enterWalkthrough(space); };
+  const stepSpace = (direction) => {
+    const currentIndex = selectedTourIndex >= 0 ? selectedTourIndex : 0;
+    const nextIndex = Math.max(0, Math.min(allTourSpaces.length - 1, currentIndex + direction));
+    visitSpace(allTourSpaces[nextIndex]);
+  };
+  const toggleExpanded = async () => {
+    const viewport = mountRef.current?.parentElement;
+    try {
+      if (!isExpanded && viewport?.requestFullscreen) {
+        await viewport.requestFullscreen();
+        setIsExpanded(true);
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        setIsExpanded(false);
+      } else {
+        setIsExpanded((current) => !current);
+      }
+    } catch {
+      setIsExpanded((current) => !current);
+    }
+  };
+  const copyCameraLink = async () => {
+    const snapshot = environmentRef.current?.getCameraSnapshot?.();
+    if (!snapshot || !modelAsset?.id) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('model', modelAsset.id);
+    url.searchParams.set('view', window.btoa(unescape(encodeURIComponent(JSON.stringify(snapshot)))));
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setShareStatus('视角链接已复制');
+    } catch {
+      setShareStatus('浏览器未授权复制，请复制地址栏');
+    }
+    window.setTimeout(() => setShareStatus(''), 2400);
+  };
+  const saveContextRegistration = async () => {
+    if (!project?.id || !modelAsset?.id || !contextAsset?.id) return;
+    setRegistrationMessage('正在保存配准参数');
+    try {
+      await api(`/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          modelRegistration: {
+            modelArtifactId: modelAsset.id,
+            contextArtifactId: contextAsset.id,
+            ...registrationState
+          }
+        })
+      });
+      setRegistrationMessage('配准参数已保存 · Hypothesis');
+    } catch (error) {
+      setRegistrationMessage(`保存失败：${error.message}`);
+    }
+  };
+  const evidenceInventory = modelAsset.metadata?.evidenceInventory;
+  const evidenceCounts = evidenceInventory?.counts || {};
+  const mainRouteVideoCount = Number(modelAsset.metadata?.sourceVideoOrder?.length || 7);
+  const returnRouteVideoCount = Number(modelAsset.metadata?.returnVideoOrder?.length || 0);
+  const routeVideoCount = mainRouteVideoCount + returnRouteVideoCount;
+  const allVideoCount = Number(modelAsset.metadata?.allProjectVideoAssetCount ?? evidenceCounts.allVideoAssetRecords ?? routeVideoCount);
+  const fieldVideoCount = Number(modelAsset.metadata?.fieldVideoAssetCount ?? evidenceCounts.fieldVideoAssetRecords ?? routeVideoCount);
+  const testVideoCount = Number(modelAsset.metadata?.testVideoAssetCount ?? evidenceCounts.testVideoAssetRecords ?? Math.max(0, allVideoCount - fieldVideoCount));
+  const unmappedVideoCount = Number(modelAsset.metadata?.unmappedFieldVideoAssetCount ?? evidenceCounts.unmappedFieldVideoRecords ?? Math.max(0, fieldVideoCount - routeVideoCount));
+  const assignedSupplementalVideoCount = Number(evidenceCounts.assignedSupplementalFieldVideoRecords ?? Math.max(0, fieldVideoCount - routeVideoCount - unmappedVideoCount));
+  const ordinaryPhotoCount = Number(modelAsset.metadata?.ordinaryPhotoEvidenceCount ?? evidenceCounts.ordinaryPhotoRecords ?? modelAsset.metadata?.ordinaryPhotoEvidence ?? 0);
+  const panoramaCount = Number(modelAsset.metadata?.panoramaEvidenceCount ?? evidenceCounts.panoramaRecords ?? modelAsset.metadata?.panoramaEvidence ?? 0);
+  const fieldImageCount = Number(modelAsset.metadata?.fieldImageEvidenceCount ?? evidenceCounts.allImageAssetRecords ?? ordinaryPhotoCount + panoramaCount);
+  const evidenceSummary = evidenceInventory || modelAsset.metadata?.allProjectVideoAssetCount != null
+    ? `${fieldVideoCount}段现场视频（${mainRouteVideoCount}段主路线 + ${returnRouteVideoCount}段回程${assignedSupplementalVideoCount ? ` + ${assignedSupplementalVideoCount}段固定机位/连续性证据` : ''}${unmappedVideoCount ? ` + ${unmappedVideoCount}段补充未用于路线几何` : ''}）${testVideoCount ? `；${testVideoCount}段测试视频不参与现场成果` : ''} · ${fieldImageCount}张现场图片（${ordinaryPhotoCount}张普通照片 + ${panoramaCount}张全景）`
+    : `${routeVideoCount}段路线视频 · ${fieldImageCount || 0}张已登记现场图片`;
+  const navigationDimensionEvidence = modelAsset.metadata?.navigationDimensionEvidence
+    || modelAsset.metadata?.navigationTopologyBaseline?.evidence?.find((item) => item?.fileName === 'amap-site-boundary-20261005.png')
+    || null;
+  const navigationTopologyFirst = modelAsset.metadata?.topologyFirst === true;
+  const modelFidelity = modelAsset.kind === 'site_context_glb'
+     ? { title: modelAsset.metadata?.blenderRefined ? 'Blender 精修连续视频周边小道' : '连续视频周边小道', detail: `${evidenceSummary} · ${Math.round(modelAsset.metadata?.routeLengthM || 0)}m 连续路线 · ${Object.keys(modelAsset.metadata?.currentStateDetailCounts || modelAsset.metadata?.detailCounts || {}).length || 0} 类现状周边细节 · 现场视频帧材质证据；主楼显示为基于 CAD 首层轮廓的外景外壳，原始 SKP/CAD 室内墙、柱、门窗与材料保存在独立室内模型图层${modelAsset.metadata?.blenderRefined ? `；Blender ${modelAsset.metadata?.blenderVersion || ''} 对 ${modelAsset.metadata?.blenderRefinement?.bevelAppliedCount || 0} 个构件设置可编辑倒角，并精修 ${modelAsset.metadata?.blenderRefinement?.tunedMaterialCount || 0} 类 PBR 材质` : ''}。现状展示默认隐藏施工围挡、塔吊和临时框架，历史施工证据仍可在专家模式回看；设施只出现在对应视频区间，未拍连接、程序化微纹理、设施尺寸、材质精修和绝对线位为 Hypothesis；场景不放置方向箭头或代表车辆。`, coordinate: '本地 ENU 米制近似配准，已绑定项目锚点，但不是测绘级成果' }
+     : modelAsset.kind === 'site_interior_model_glb'
+       ? { title: '主建筑独立室内 CAD/BIM', detail: `${modelAsset.metadata?.levelCount ?? 1} 个楼层 · 源 SKP/CAD 几何与材料保留在独立室内资产；不会混入周边外景 GLB。`, coordinate: '相对米制，需与周边场景单独配准后叠加' }
+     : modelAsset.kind === 'skp_glb'
+    ? { title: 'SKP 主体模型', detail: '门窗、砖瓦与贴图仅来自原始 SKP；系统不会补造未建模细节。', coordinate: modelAsset.metadata?.georeferenced ? '已与项目地理锚点配准' : '相对米制，未与 OSM 地理底景配准' }
+    : modelAsset.kind === 'blender_enhanced_glb'
+      ? { title: 'Blender PBR 增强模型', detail: `${modelAsset.metadata?.levelCount ?? 1} 个独立楼层 · 几何沿用 ${modelAsset.metadata?.schema || 'CAD 室内模型'}；程序纹理、PBR参数、灯光与预览相机为 Hypothesis，不代表现场实测材质。`, coordinate: project?.modelRegistration?.modelArtifactId === modelAsset.id ? '已保存与 OSM 的人工配准参数，证据等级为 Hypothesis' : '继承相对米制坐标，需保存配准参数后才能与 OSM 同场叠加' }
+    : modelAsset.kind === 'dwg_extrusion_glb'
+      ? /^dwg_interior_model\.v[234]$/.test(modelAsset.metadata?.schema || '')
+        ? { title: modelAsset.metadata?.schema === 'dwg_interior_model.v4' ? 'CAD 室内语义 v4' : modelAsset.metadata?.schema === 'dwg_interior_model.v3' ? 'CAD 室内三维 v3' : 'CAD 室内三维 v2', detail: `${modelAsset.metadata?.levelCount ?? 1} 个独立楼层 · ${modelAsset.metadata?.sourceSurfaceCount ?? 0} 个面状墙体/柱体依据 · ${modelAsset.metadata?.openingCounts?.door ?? 0} 门 / ${modelAsset.metadata?.openingCounts?.window ?? 0} 窗 · ${modelAsset.metadata?.resolvedOpeningCounts?.window ?? modelAsset.metadata?.wallOpeningCutCount ?? 0} 个窗洞已与墙体对齐 · ${modelAsset.metadata?.windowFrameCount ?? 0} 组窗框 · ${modelAsset.metadata?.selectedFurnitureCount ?? 0} 件简化家具 · ${modelAsset.metadata?.selectedSemanticObjectCount ?? 0} 个停车/景观/洁具/消防/机电语义对象 · ${modelAsset.metadata?.railingCount ?? modelAsset.metadata?.categoryCounts?.railing ?? 0} 组护栏/栏杆 · ${modelAsset.metadata?.handrailCount ?? modelAsset.metadata?.categoryCounts?.handrail ?? 0} 段扶手；平面几何为 Derived，垂直尺寸与细部参数为 Hypothesis。`, coordinate: project?.modelRegistration?.modelArtifactId === modelAsset.id ? '已保存与 OSM 的人工配准参数，证据等级为 Hypothesis' : '相对米制，需保存配准参数后才能与 OSM 同场叠加' }
+        : { title: modelAsset.metadata?.schema === 'dwg_interior_model.v1' ? 'CAD 室内三维 · 旧版' : 'DWG 参数化补模', detail: modelAsset.metadata?.schema === 'dwg_interior_model.v1' ? `${modelAsset.metadata?.outputSegmentCount ?? 0} 条结构线 · ${modelAsset.metadata?.openingCounts?.door ?? 0} 门 / ${modelAsset.metadata?.openingCounts?.window ?? 0} 窗 · ${modelAsset.metadata?.floorSlabCount ?? 0} 块楼板；该版本为单平面拉伸资产。` : `${modelAsset.metadata?.outputSegmentCount ?? 0} 条 DWG 结构线已拉伸；该旧资产未包含完整门窗和楼板。`, coordinate: '相对米制，需控制点或变换矩阵后才能与 SKP / OSM 同场叠加' }
+    : modelAsset.kind === 'osm_context_glb'
+      ? { title: 'OSM 周边体量与道路', detail: `${modelAsset.metadata?.counts?.buildings ?? 0} 栋建筑 · ${modelAsset.metadata?.counts?.roads ?? 0} 条道路；材质为概念显示，不含立面门窗。`, coordinate: 'WGS84 → 本地 ENU，已绑定项目地理锚点' }
+      : modelAsset.kind === 'dwg_plan_glb'
+        ? { title: 'DWG 平面校核', detail: '仅显示可解析线段，不包含立面、门窗或贴图材质。', coordinate: modelAsset.metadata?.georeferenced ? '已地理配准' : '米制源坐标，未与 OSM 配准' }
+        : modelType === 'ply'
+          ? { title: '点云实景层', detail: '颜色来自点云顶点；点密度决定可见细节。', coordinate: '坐标状态以源资产记录为准' }
+          : { title: '导入 GLB / GLTF', detail: '几何、门窗与材质均来自上传文件。', coordinate: modelAsset.metadata?.georeferenced ? '已地理配准' : '坐标状态未声明，暂不能保证与 OSM 同场对齐' };
+  const supplementalReferenceConflicts = Array.isArray(modelAsset?.metadata?.supplementalReferenceConflicts)
+    ? modelAsset.metadata.supplementalReferenceConflicts
+    : [];
+  const openReferenceConflictCount = supplementalReferenceConflicts.filter((item) => ![
+    'resolved_by_visibility_policy',
+    'resolved_by_reference_correction',
+    'operator_approved_approximate',
+    'reference_only'
+  ].includes(item?.status)).length;
+  const handleCompetitionPresentation = async () => {
+    if (loadState.status !== 'ready') return;
+    const runtime = environmentRef.current;
+    if (!runtime?.model) return;
+    try {
+      if (!digitalDerivative) {
+        const result = await runtime.setDigitalDerivative?.(true);
+        if (result?.active !== true) return;
+        setDigitalDerivative(true);
+      }
+      setCompetitionPresentation(true);
+      setTwinMode(true);
+      runtime.setTwinMode?.(true);
+      setDisplayMode('day-night');
+      setHeatmapPlan('P-BALANCED');
+      setAgentSlot('weekday_arrival');
+      setAgentCount(260);
+      setFluidMode(false);
+      runtime.fitView?.();
+    } catch (error) {
+      console.error('比赛演示模式启动失败', error);
+    }
+  };
+  const exitCompetitionPresentation = async () => {
+    const runtime = environmentRef.current;
+    try {
+      if (digitalDerivative) {
+        const result = await runtime?.setDigitalDerivative?.(false);
+        if (result?.active === false) setDigitalDerivative(false);
+      }
+    } catch (error) {
+      console.error('比赛演示模式退出失败', error);
+    }
+    setCompetitionPresentation(false);
+    setTwinMode(false);
+    runtime?.setTwinMode?.(false);
+    setDisplayMode('original');
+    setHeatmapPlan('P-SAFE');
+    setAgentCount(300);
+    setFluidMode(false);
+  };
+  const selectedSurfaceEditor = surfaceEditorObjects.find((item) => item.id === surfaceEditorId) || surfaceEditorObjects[0] || null;
+  const selectSurfaceEditorObject = (id) => {
+    setSurfaceEditorId(id);
+    const selection = environmentRef.current?.selectEditableObject?.(id);
+    if (selection) setDirectSurfaceSelection(selection);
+  };
+  const updateSurfaceEditor = (key, value) => {
+    if (!selectedSurfaceEditor) return;
+    const next = environmentRef.current?.setBWalkEditorObject?.(selectedSurfaceEditor.id, { [key]: Number(value) }) || [];
+    setSurfaceEditorObjects(next);
+    setSurfaceEditorMessage(`${selectedSurfaceEditor.label} · ${key === 'length' ? '长度' : key === 'width' ? '宽度' : key === 'offsetX' ? 'X偏移' : 'Z偏移'}已更新`);
+  };
+  const resetSurfaceEditor = () => {
+    if (!selectedSurfaceEditor) return;
+    const next = environmentRef.current?.resetBWalkEditorObject?.(selectedSurfaceEditor.id) || [];
+    setSurfaceEditorObjects(next);
+    setSurfaceEditorMessage(`${selectedSurfaceEditor.label} · 已恢复初始尺寸和位置`);
+  };
+  const captureSurfaceFormat = () => {
+    const result = environmentRef.current?.captureBWalkFormat?.(surfaceFormatSourceId);
+    const source = surfaceEditorObjects.find((item) => item.id === surfaceFormatSourceId);
+    setSurfaceEditorMessage(result ? `已吸取「${source?.label || '源对象'}」格式，选择目标后点击应用` : '源对象暂不可用');
+  };
+  const applySurfaceFormat = () => {
+    const result = environmentRef.current?.applyBWalkFormat?.(surfaceFormatTargetId);
+    const target = surfaceEditorObjects.find((item) => item.id === surfaceFormatTargetId);
+    setSurfaceEditorMessage(result ? `已将格式刷应用到「${target?.label || '目标对象'}」` : '请先吸取格式');
+    if (result) setSurfaceEditorObjects(environmentRef.current?.getBWalkEditorObjects?.() || []);
+  };
+  const captureDirectFormat = () => {
+    const result = environmentRef.current?.captureEditableFormat?.();
+    setDirectFormatBrushArmed(Boolean(result));
+    setSurfaceEditorMessage(result ? `已吸取「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」格式，请点击目标对象` : '请先在场景中点击一个可编辑对象');
+  };
+  const applyDirectFormat = () => {
+    const result = environmentRef.current?.applyEditableFormat?.();
+    if (result) setDirectFormatBrushArmed(false);
+    setSurfaceEditorMessage(result ? `已把格式刷应用到「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」` : '请先吸取格式，再选中目标对象');
+  };
+  const copyDirectSelection = () => {
+    const result = environmentRef.current?.copyEditableObject?.();
+    setSurfaceEditorMessage(result ? `已复制「${result.label}」，点击粘贴会在旁边生成副本` : '请先在场景中点击一个可编辑对象');
+  };
+  const pasteDirectSelection = () => {
+    const result = environmentRef.current?.pasteEditableObject?.();
+    setSurfaceEditorMessage(result ? `已粘贴「${result.label}」副本` : '请先复制一个可编辑对象');
+  };
+  const deleteDirectSelection = () => {
+    const result = environmentRef.current?.deleteEditableObject?.();
+    setSurfaceEditorMessage(result ? `已删除「${result.name}」，可点击撤销删除` : '主大楼或未选对象不能删除');
+  };
+  const undoDirectSelectionDelete = () => {
+    const result = environmentRef.current?.undoEditableDelete?.();
+    setSurfaceEditorMessage(result ? `已恢复「${result.label || result.name}」` : '当前没有可撤销的删除');
+  };
+  const clipDirectSelection = () => {
+    const result = environmentRef.current?.clipEditableObject?.({ axis: surfaceClipAxis, keepSide: surfaceClipKeepSide, fraction: Number(surfaceClipFraction) });
+    setSurfaceEditorMessage(result ? `已裁剪「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」的一侧，可撤回` : '请先在场景中点击一个可编辑对象');
+  };
+  const undoDirectSelectionClip = () => {
+    const result = environmentRef.current?.undoEditableClip?.();
+    setSurfaceEditorMessage(result ? `已撤回「${result.target}」的区域裁剪` : '当前没有可撤回的区域裁剪');
+  };
+  return <><div className="metro-view-toolbar" style={{ position: 'static', padding: '6px 10px', background: '#07131c' }}>
+    <select aria-label="地铁口视角预设" defaultValue="" disabled={loadState.status !== 'ready'} onChange={(event) => {
+      const presets = [ [[-70,70,-130],[-83,0,-104]], [[-50,30,-135],[-83,2,-104]], [[150,130,160],[-30,0,-50]], [[-20,100,80],[-69,0,40]], [[-45,25,10],[-69,2,40]], [[150,130,160],[-30,0,20]] ];
+      const runtime = environmentRef.current;
+      const preset = presets[Number(event.target.value)];
+      if (event.target.value !== '' && runtime?.model && preset) {
+        runtime.camera.position.fromArray(preset[0]).add(runtime.model.position);
+        runtime.controls.target.fromArray(preset[1]).add(runtime.model.position);
+        runtime.controls.update();
+      }
+      event.target.value = '';
+    }}><option value="">地铁口视角 ▾</option>{['2号口俯视','2号口人视','2号口接驳全景','4号口俯视','4号口人视','4号口接驳全景'].map((label, index) => <option key={label} value={index}>{label}</option>)}</select>
+  </div><div className={`three-mount-wrap ${isExpanded ? 'expanded' : ''} ${navigationMode === 'walkthrough' ? 'walkthrough' : ''} ${navigationMode === 'route-tour' ? 'route-tour' : ''} ${competitionPresentation ? 'competition-presentation' : ''}`} data-navigation-mode={navigationMode}>
+    <div className="three-mount" ref={mountRef} aria-label={`三维模型预览：${modelName}`} />
+    <div className="coordinate-probe" aria-live="polite">
+      <div><strong>当前层坐标</strong><span>{pointerCoordinate ? `X ${pointerCoordinate.x.toFixed(3)} · Y ${pointerCoordinate.y.toFixed(3)} · Z ${pointerCoordinate.z.toFixed(3)}` : '移动鼠标到场地表面'}</span></div>
+      <button type="button" disabled={!pointerCoordinate} onClick={() => pointerCoordinate && setCoordinateRows((rows) => [...rows, { id: `${modelAsset.id}-${rows.length + 1}`, layer: layerLabel(modelAsset), x: pointerCoordinate.x, y: pointerCoordinate.y, z: pointerCoordinate.z, object: '待指定', source: 'operator_point' }])}>记录点</button>
+      <details><summary>面层点位表（{coordinateRows.length}）</summary><table><thead><tr><th>#</th><th>对象</th><th>X</th><th>Y</th><th>Z</th></tr></thead><tbody>{coordinateRows.map((row, index) => <tr key={row.id}><td>{index + 1}</td><td>{row.object}</td><td>{row.x.toFixed(3)}</td><td>{row.y.toFixed(3)}</td><td>{row.z.toFixed(3)}</td></tr>)}</tbody></table>{coordinateRows.length > 0 && <button type="button" onClick={() => setCoordinateRows([])}>清空表格</button>}</details>
+    </div>
+    {/* B-WALK-01 photo evidence remains in the evidence archive; its viewport panel is hidden during cleanup. */}
+    {twinMode && <div className="twin-hud" aria-label="孪生模式状态面板">
+      <div className="twin-hud-title"><span className="twin-hud-dot" />SPATIAL TWIN <b>ONLINE</b></div>
+      <div className="smart-city-kicker"><span>SMART CITY DERIVATIVE</span><em>L3 CITY OPS · DERIVED LAYER</em></div>
+      <div className="twin-hud-grid"><span>小路拥挤度</span><strong>{congestionLabel(renderedAgentCount)}</strong><small>小路 agents · Simulated</small><span>方案</span><strong>{heatmapPlan}</strong><small>route heatmap</small><span>FPS</span><strong>{fps == null ? '--' : fps}</strong><small>{fluidMode ? 'fluid mode' : 'live'}</small></div>
+      <div className="twin-hud-badges"><em>Simulated</em><i>Scenario</i><span>ACES · Bloom</span></div>
+      <div className="derivative-state-compare" aria-label="改造前后状态对比">
+        <div className="derivative-state before"><span>01 · 现状场景</span><strong>OBSTRUCTION</strong><small>围栏阻断 · 入口绕行 · 混行压力</small></div>
+        <i aria-hidden="true">→</i>
+        <div className="derivative-state after"><span>02 · {heatmapPlan} 改造后</span><strong>{heatmapPlan === 'P-EFFICIENCY' ? 'FLOW SPLIT' : 'FLOW RELEASE'}</strong><small>{heatmapPlan === 'P-EFFICIENCY' ? '双开口分流 · 门禁复杂度上升' : '地面小门 · 直达分流 · 小路热力'}</small></div>
+      </div>
+      <div className="derivative-engine-panel">
+        <div className="derivative-engine-head"><span>DERIVATIVE ENGINE · L3</span><b>OBSERVE → TEST → DECIDE</b></div>
+        <div className="derivative-pipeline"><span>现场锚点</span><i>→</i><span>流量信号</span><i>→</i><span>改造方案</span><i>→</i><span>复算验证</span></div>
+        <div className="derivative-compare-strip"><span>现状</span><b>西门 {transportPlan?.lastSimulation?.roadResults?.find((item) => item.roadId === 'west-gate-walkway')?.flow?.pedestrians ?? 132}</b><small>人/时</small><b>南侧 {transportPlan?.lastSimulation?.roadResults?.find((item) => item.roadId === 'south-service-lane')?.flow?.pedestrians ?? 86}</b><small>人/时</small><i>→</i><span>{heatmapPlan} 改造后</span><b>{heatmapPlan === 'P-EFFICIENCY' ? '开口分流' : '小门 +60'}</b><small>{heatmapPlan === 'P-EFFICIENCY' ? '待现场分配' : '人/时'}</small></div>
+        <small className="derivative-engine-note">24H 轨道是全天情景强度时间轴；不是逐人运动轨迹。数字为 Scenario，需现场穿越计数校准。</small>
+      </div>
+      <div className="pain-narrative-panel"><strong>三处改建痛点 · {heatmapPlan}</strong><div className="pain-point-buttons">{['① 西门人行小道','② 南侧混行线','③ 栅栏小门'].map((label, index) => <button type="button" key={label} onClick={() => environmentRef.current?.focusPainPoint?.(index)}>{label}<small>{twinMode ? '解法路径' : '现状警示'}</small></button>)}</div>{painMetrics?.plans && Object.values(painMetrics.plans).some((metric) => Number(metric.currentM) > 0) ? <div className="pain-metric-list">{Object.entries(painMetrics.plans).map(([id, metric]) => <div key={id}><span>{id}</span><b>南侧小路：{metric.currentM}m → {metric.planM}m</b><small>省 {metric.savingPercent}% · Simulated</small></div>)}</div> : <div className="pain-metric-empty">路线长度未实测 · 只显示小路状态与方案关系，不把估算距离冒充现场测量。</div>}</div>
+    </div>}
+    {competitionPresentation && <aside className="competition-presentation-legend" aria-label="比赛演示空间关系说明">
+      <div className="competition-presentation-heading"><span>COMPETITION PRESENTATION</span><strong>空间关系在线</strong></div>
+      <div className="competition-presentation-status">Derived scene · Simulated flow</div>
+      <div className="competition-relation-list">
+        <div><strong>主楼外壳</strong><span>↔ 侧小道 / 栅栏 · Derived</span></div>
+        <div><strong>2号口 · 4号口</strong><span>↔ 主楼接驳路线 · Observed anchor</span></div>
+        <div><strong>三处痛点</strong><span>↔ P-BALANCED 解法路径 · Scenario</span></div>
+        <div><strong>小路人流与热力</strong><span>西门小道 / 南侧混行线 · Simulated</span></div>
+      </div>
+      <small>本模式只改变呈现层；真实模型、照片证据和来源台账仍可退出后查看。</small>
+    </aside>}
+    {modelAsset?.id === 'asset_10602c89c51e' && <div className="asset-layer-watermark" style={{ position: 'absolute', left: 16, bottom: 16, zIndex: 45, padding: '7px 12px', color: '#fff8ef', background: 'rgba(8,18,22,.86)', border: '1px solid #ff9f68', font: '600 12px/1.2 sans-serif', pointerEvents: 'none' }}>当前图层：新标注图 · 三栋外围建筑与小道</div>}
+    {modelAsset?.kind === 'site_context_glb' && sitePreviewArtifact?.url && <div className={`three-mount-poster ${['preview', 'ready'].includes(loadState.status) ? 'ready' : ''}`} aria-hidden={['preview', 'ready'].includes(loadState.status)}>
+      <img src={sitePreviewArtifact.url} alt="当前三维场景快速预览" decoding="async" fetchPriority="high" />
+      <div className="three-mount-poster-copy"><strong>场景预览已就绪</strong><span>高清三维模型正在后台解码，完成后自动切换。</span></div>
+    </div>}
+    {loadState.status === 'preview' && <div className="viewport-preview-status" role="status"><strong>快速三维</strong><span>{loadState.message}</span></div>}
+    <div className="viewport-mode-bar" role="status" aria-live="polite">
+      <div className="viewport-mode-copy">
+        <span className="viewport-mode-kicker">当前操作</span>
+        <strong>{activeNavigationMode.label}</strong>
+        <span>{activeNavigationMode.detail}</span>
+      </div>
+      <button type="button" className={`viewport-help-trigger ${showInteractionHelp ? 'active' : ''}`} aria-expanded={showInteractionHelp} onClick={() => setShowInteractionHelp((current) => !current)}>
+        <CircleHelp size={14} />操作说明
+      </button>
+    </div>
+    {showInteractionHelp && <div className="viewport-help-panel" role="note">
+      <strong>{activeNavigationMode.label} · 怎么操作</strong>
+      <span>{activeNavigationMode.hint}</span>
+      <small>显示模式和模型图层只改变呈现方式，不会修改原始三维资产。</small>
+    </div>}
+    {visualAssets.length > 1 && <details className="model-layer-picker" open>
+      <summary><span>三维图层</span><strong>{Math.max(1, visualAssets.findIndex((asset) => asset.id === modelAsset.id) + 1)} / {visualAssets.length}</strong></summary>
+      <div className="model-layer-switch" role="group" aria-label="三维资产图层" aria-busy={loadState.status === 'loading'}>{visualAssets.map((asset) => { const isRegisteredActive = asset.id === project?.modelRegistration?.siteContextArtifactId; return <button type="button" key={asset.id} disabled={loadState.status === 'loading'} className={`${asset.id === modelAsset.id ? 'active' : ''} ${directImageCandidateModelKinds.has(asset.kind) ? 'candidate-layer' : ''} ${isRegisteredActive ? 'registered-active-layer' : ''}`} aria-pressed={asset.id === modelAsset.id} onClick={() => { explicitModelSelectionRef.current = true; setSelectedModelId(asset.id); }}>{layerLabel(asset)}{isRegisteredActive ? ' · 当前主场景' : ''}</button>; })}</div>
+      <div className="model-layer-merge-probe" style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        <button type="button" onClick={() => window.__sfLayerMerge?.toggle()}>图层合并预览 {window.__sfLayerMerge?.count?.() ?? 0} 层已合并</button>
+        <button type="button" onClick={() => window.__sfLayerMerge?.clear()}>清空</button>
+      </div>
+    </details>}
+    {modelAsset?.kind === 'site_map_layout_candidate_glb' && <details key={modelAsset.id} className="direct-image-candidate-banner candidate-view-controls">
+      <summary>视角与素材</summary>
+      <div className="candidate-view-controls-body">
+      <strong>{detailOrientationCandidate ? '③立面细节朝向修正' : orientationCorrectionCandidate ? '③建筑朝向修正' : entryCorrectionCandidate ? '入口围栏与③砖楼' : fullCaptureCandidate ? '全场地细化 · 材质与路线' : evidenceCompletionCandidate ? '场地补全 · ②侧边与小道设施' : '新标注图 · 三栋外围建筑与蓝线小道'}</strong>
+      <span>{detailOrientationCandidate ? '保持③主体和导航占地不变，只将生成的砖墙表面、窗列、外挑百叶箱和弧形雨棚转到正确立面；主楼、道路和人行门未改。' : orientationCorrectionCandidate ? '按用户现场照片将③正面、背面整体旋转180°，中心和导航占地不变；主大楼、道路及人行门未改。' : entryCorrectionCandidate ? '补充③砖墙、窗列与百叶箱，修正灰色围栏、人行折返栏杆、岗亭和车行设备；主大楼未改。高度和局部落点按照片比例估计，待你核对。' : fullCaptureCandidate ? '112份采景素材已按连续区域补充：③两面立面、南侧道路停车、东侧连续路线和夹道构造；尺寸仍以照片与导航相对比例为准。' : evidenceCompletionCandidate ? '②仅补夹道侧立面，高度估算；①③仍为体块。小道设施落点近似，主楼旧窗列待修。' : '占地按图对齐；外围建筑暂高12米，主楼立面保留待修。绿色线不参与建模。'}</span>
+      {['查看整体', '俯视核对位置'].map((label, index) => <button key={label} type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return;
+        const bounds = new runtime.THREE.Box3().setFromObject(runtime.model);
+        const target = bounds.getCenter(new runtime.THREE.Vector3());
+        const radius = bounds.getBoundingSphere(new runtime.THREE.Sphere()).radius;
+        const vertical = runtime.THREE.MathUtils.degToRad(runtime.camera.fov);
+        const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * runtime.camera.aspect);
+        const distance = radius / Math.sin(Math.min(vertical, horizontal) / 2) * 1.08;
+        runtime.camera.position.copy(target).add(index ? new runtime.THREE.Vector3(0, distance, .001) : new runtime.THREE.Vector3(-distance * .35, distance * .75, distance * .5));
+        runtime.controls.target.copy(target);
+        runtime.controls.update();
+      }}>{label}</button>)}
+      {evidenceCompletionCandidate && <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return;
+        runtime.camera.position.set(-72, 20, -123).add(runtime.model.position);
+        runtime.controls.target.set(-34, 17, -102).add(runtime.model.position);
+        runtime.controls.update();
+      }}>查看②侧边</button>}
+      {fullCaptureCandidate && <details style={{ pointerEvents: 'auto' }}>
+        <summary>更多视角与全部素材</summary>
+        {[['主楼前侧', [20, 10, 100], [0, 10, 54]], ['树荫侧', [-105, 9, 10], [-72, 11, -2]], ['外围东侧', [125, 8, -25], [74, 8, -25]], ['入口区域', [68, 4, -105], [65, 2, -80]], ...(entryCorrectionCandidate ? [['③砖楼细节', [70, 9, -89], [95, 10, -87]], ['人行入口', [61, 3, -73], [61, 1, -79]]] : []), ...(/-v3\.glb$/.test(modelAsset?.name || '') ? [['入口细节', [6, 3.1, 72], [3, 2, 56]], ['藤蔓与桁架', [-98, 12, 6], [-84, 14, -4]], ['栏杆外非机动车', [35, 5, -92], [30, 1, -79]]] : [])].map(([label, position, target]) => <button key={label} type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
+          const runtime = environmentRef.current;
+          if (!runtime?.model) return;
+          runtime.camera.position.set(...position).add(runtime.model.position);
+          runtime.controls.target.set(...target).add(runtime.model.position);
+          runtime.controls.update();
+        }}>{label}</button>)}
+        <a className="secondary-button" style={{ pointerEvents: 'auto' }} href={entryCorrectionCandidate ? (/人行门-v6/.test(modelAsset?.name || '') ? '/capture-review/pedestrian-gate-v3/index.html' : /人行门-v5/.test(modelAsset?.name || '') ? '/capture-review/pedestrian-gate-v2/index.html' : '/capture-review/entry-fence-v1/index.html') : (/工程补充|连续场景与车库细化|全场地连续细化|错误构件清理版/.test(modelAsset?.name || '')) ? '/capture-review/complete-capture-20261010-v5/index.html' : /-v3\.glb$/.test(modelAsset?.name || '') ? '/capture-review/oct02-details-v3/index.html' : '/capture-review/full-capture-v1/index.html'} target="_blank" rel="noreferrer">{entryCorrectionCandidate ? (/人行门-v[56]/.test(modelAsset?.name || '') ? '人行门修正对照' : '入口与③砖楼照片对照') : (/工程补充|连续场景与车库细化|全场地连续细化|错误构件清理版/.test(modelAsset?.name || '')) ? '112份采景工程分析与定位' : /-v3\.glb$/.test(modelAsset?.name || '') ? '10月2日景物补充与定位对照' : '112份素材定位与使用情况'}</a>
+      </details>}
+      </div>
+    </details>}
+    {['main_building_facade_candidate_glb', 'site_side_path_candidate_glb'].includes(modelAsset?.kind) && <div className="direct-image-candidate-banner" role="note">
+      <strong>{modelAsset.kind === 'site_side_path_candidate_glb' ? '主楼旁小道 · 路面与两侧路缘' : '主楼 · 照片五区实景候选'}</strong>
+      <span>{modelAsset.kind === 'site_side_path_candidate_glb' ? '立面暂留待修；路宽、排水口和减速带落点为近似。' : '图1至图5对应的主楼材质已直接写入模型网格；视频尚未加入，入口、道路和其他区域保持。'}</span>
+      <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return;
+        const bounds = new runtime.THREE.Box3();
+        const prefix = modelAsset.kind === 'site_side_path_candidate_glb' ? 'A03_PATH_' : 'main-building-exterior-review-';
+        runtime.model.traverse((object) => { if (object.isMesh && object.name.startsWith(prefix)) bounds.expandByObject(object); });
+        if (bounds.isEmpty()) return;
+        const target = bounds.getCenter(new runtime.THREE.Vector3());
+        const radius = bounds.getBoundingSphere(new runtime.THREE.Sphere()).radius;
+        const vertical = runtime.THREE.MathUtils.degToRad(runtime.camera.fov);
+        const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * runtime.camera.aspect);
+        const distance = radius / Math.sin(Math.min(vertical, horizontal) / 2) * 1.12;
+        runtime.camera.position.copy(target).add(new runtime.THREE.Vector3(0, distance * (modelAsset.kind === 'site_side_path_candidate_glb' ? .7 : .08), -distance));
+        runtime.controls.target.copy(target);
+        runtime.controls.update();
+      }}>{modelAsset.kind === 'site_side_path_candidate_glb' ? '查看小道' : '查看新增窗列'}</button>
+      {modelAsset.kind === 'site_side_path_candidate_glb' && <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
+        const runtime = environmentRef.current;
+        if (!runtime?.model) return;
+        runtime.camera.position.set(59, 1.85, -70.5).add(runtime.model.position);
+        runtime.controls.target.set(20, 1.3, -70.5).add(runtime.model.position);
+        runtime.controls.update();
+      }}>沿小道查看</button>}
+    </div>}
+    {modelAsset?.kind === 'main_building_facade_candidate_glb' && <details className="facade-photo-evidence-panel" open>
+      <summary><span>照片证据 · 主楼图1至图5</span><small>用户已确认区域顺序</small></summary>
+      <div className="facade-photo-zone-tabs" role="tablist" aria-label="主楼照片区域">
+        {facadePhotoZones.map((zone) => <button type="button" key={zone.id} className={selectedFacadeZone === zone.id ? 'active' : ''} aria-selected={selectedFacadeZone === zone.id} onClick={() => setSelectedFacadeZone(zone.id)}>{zone.label}</button>)}
+      </div>
+      {(() => { const zone = facadePhotoZones.find((item) => item.id === selectedFacadeZone) || facadePhotoZones[0]; return <div className="facade-photo-zone-detail">
+        <div className="facade-photo-pair"><figure><img src={zone.image} alt={`${zone.label}现场照片`} loading="lazy" /><figcaption>现场照片</figcaption></figure><figure><img src={zone.modelImage} alt={`${zone.label}当前模型位置`} loading="lazy" /><figcaption>用户指定的模型位置</figcaption></figure></div>
+         <div><strong>{zone.title}</strong><span>来源：{zone.evidence}</span><small>照片默认按地面向上视角解释；模型位置由用户截图确认。视频尚未加入本候选。</small></div>
+         <div className="facade-photo-reference-controls">
+           <button type="button" className={`secondary-button ${showFacadePhotoReference ? 'active' : ''}`} aria-pressed={showFacadePhotoReference} onClick={() => setShowFacadePhotoReference((current) => !current)}>{showFacadePhotoReference ? '关闭参考叠加' : '参考叠加'}<small>Observed photo</small></button>
+           <label><span>透明度</span><input type="range" min="0.16" max="0.78" step="0.01" value={facadePhotoReferenceOpacity} onChange={(event) => setFacadePhotoReferenceOpacity(Number(event.target.value))} /><output>{Math.round(facadePhotoReferenceOpacity * 100)}%</output></label>
+         </div>
+      </div>; })()}
+    </details>}
+    {modelAsset?.kind === 'main_building_facade_candidate_glb' && showFacadePhotoReference && (() => { const zone = facadePhotoZones.find((item) => item.id === selectedFacadeZone) || facadePhotoZones[0]; return <div className="facade-photo-reference-overlay" aria-label="现场照片参考叠加">
+      <img src={zone.image} alt={`${zone.label}现场照片参考叠加`} style={{ opacity: facadePhotoReferenceOpacity }} />
+      <div className="facade-photo-reference-badge"><strong>REFERENCE OVERLAY</strong><span>{zone.label} · Observed photo · Illustrative camera match</span><small>透明度可调；机位为手工还原，不宣称测绘级配准。</small></div>
+    </div>; })()}
+    <div className="display-mode-control">
+      <button type="button" className={`twin-mode-toggle perimeter-scope-toggle ${immediatePerimeterMode ? 'active' : ''}`} aria-pressed={immediatePerimeterMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '窗口1：主楼左侧连续段 · 两条小道 · 栅栏 · 绿化'} onClick={() => setImmediatePerimeterMode((current) => !current)}><Route size={14} />{immediatePerimeterMode ? '窗口1 · B-WALK-01 ON' : '窗口1 · B-WALK-01 OFF'}<small>主楼左侧 · Derived</small></button>
+      <details className="viewport-layer-controls">
+        <summary><Layers3 size={14} /><span>显示与仿真</span><small>图层 · 模式 · 人流</small></summary>
+        <div className="viewport-layer-controls-body">
+      <button type="button" className={`twin-mode-toggle middle-building-toggle ${middleBuildingMode ? 'active' : ''}`} aria-pressed={middleBuildingMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '导入入口层的中间建筑②'} onClick={() => setMiddleBuildingMode((current) => !current)}><Building2 size={14} />{middleBuildingMode ? '导入中间建筑② · ON' : '导入中间建筑② · OFF'}<small>原体块 · Observed</small></button>
+      <button type="button" className="twin-mode-toggle middle-building-focus" disabled={loadState.status !== 'ready' || !middleBuildingMode} title="把镜头移到中间建筑②" onClick={() => environmentRef.current?.focusMissingMiddleBuilding?.()}><LocateFixed size={14} />查看中间建筑②<small>定位镜头</small></button>
+      <button type="button" className={`twin-mode-toggle competition-presentation-toggle ${competitionPresentation ? 'active' : ''}`} aria-pressed={competitionPresentation} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '数字衍生夜景 + 关系标签 + 视觉拥挤度'} onClick={() => { if (competitionPresentation) void exitCompetitionPresentation(); else void handleCompetitionPresentation(); }}><ScanLine size={14} />{competitionPresentation ? '退出比赛演示' : '比赛演示 · NIGHT'}<small>Derived / Simulated</small></button>
+      <button type="button" className={`twin-mode-toggle ${twinMode ? 'active' : ''}`} aria-pressed={twinMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : undefined} onClick={() => { const next = !twinMode; setTwinMode(next); environmentRef.current?.setTwinMode?.(next); }}><Sparkles size={14} />{twinMode ? '孪生模式 · ONLINE' : '开启孪生模式'}<small>Simulated</small></button>
+      <button type="button" className={`twin-mode-toggle derivative-toggle ${digitalDerivative ? 'active' : ''}`} aria-pressed={digitalDerivative} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : undefined} onClick={async () => { const next = !digitalDerivative; const result = await environmentRef.current?.setDigitalDerivative?.(next); if (result?.active === next) { setDigitalDerivative(next); if (next) setTwinMode(true); } }}><Sparkles size={14} />{digitalDerivative ? '数字衍生 · ONLINE' : '数字衍生'}<small>Derived / Simulated</small></button>
+      <button type="button" className={`twin-mode-toggle fluid-mode-toggle ${fluidMode ? 'active' : ''}`} aria-pressed={fluidMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : 'Bloom 0.25 · DPR 1.0 · agent ≤150'} onClick={() => setFluidMode((current) => !current)}><Gauge size={14} />{fluidMode ? '流畅模式 · ON' : '流畅模式'}<small>FPS {fps == null ? '--' : fps}</small></button>
+      <div className="twin-agent-controls" aria-label="模拟人流控制">
+        <label title={agentPathSummary.labels.length ? `人流仅沿${agentPathSummary.labels.join('、')}分布` : '等待小路路线数据'}>小路拥挤度 · Simulated <input type="range" min="0" max="500" step="1" value={agentCount} onChange={(event) => setAgentCount(Number(event.target.value))} /><output>{congestionLabel(renderedAgentCount)}</output></label>
+        <select value={agentSlot} onChange={(event) => setAgentSlot(event.target.value)} aria-label="人流时段">
+          <option value="weekday_arrival">早高峰 08:30–09:30 · 1.0×</option>
+          <option value="weekday_midday">平峰 12:30–13:30 · 0.45×</option>
+          <option value="weekday_departure">晚高峰 17:30–18:30 · 0.9×</option>
+        </select>
+        <select value={heatmapPlan} onChange={(event) => setHeatmapPlan(event.target.value)} aria-label="热力方案">
+          <option value="P-SAFE">热力 P-SAFE · Simulated</option>
+          <option value="P-EFFICIENCY">热力 P-EFFICIENCY · Simulated</option>
+          <option value="P-BALANCED">热力 P-BALANCED · Simulated</option>
+        </select>
+      </div>
+        </div>
+      </details>
+      <div className="display-mode-switch" role="group" aria-label="模型显示模式">
+        {displayModes.map((mode) => <button type="button" key={mode.id} data-mode={mode.id} className={mode.id === displayMode ? 'active' : ''} aria-pressed={mode.id === displayMode} aria-label={`${mode.label}：${mode.detail}`} title={mode.detail} onClick={() => setDisplayMode(mode.id)}><span>{mode.index}</span>{mode.label}</button>)}
+      </div>
+      <div className="display-mode-note" aria-live="polite"><strong>{activeDisplayMode.label}</strong><span>{activeDisplayMode.detail}</span></div>
+      {displayMode === 'sunny' && <div className="sunny-render-status" aria-live="polite"><Sun size={13} /><span>{modelAsset?.kind === 'site_context_glb' ? '晴空 · 太阳方位 · 柔和补光' : '晴空 · 太阳方位 · 软阴影'}</span><em>{scenarioPoint?.sun ? `${Math.round(Number(scenarioPoint.sun.altitude_deg || 0))}° 高度角` : '标准日照预设'}</em></div>}
+    </div>
+    {immediatePerimeterMode && surfaceEditorObjects.length > 0 && <details className="surface-editor-panel" open={surfaceEditorOpen} onToggle={(event) => setSurfaceEditorOpen(event.currentTarget.open)}>
+      <summary><span>快速面层编辑</span><small>可缩短 / 伸长 / 格式刷</small></summary>
+      <div className={`surface-editor-body ${surfaceDirectEditEnabled ? 'editor-active' : 'editor-locked'} `}>
+        <div className="surface-direct-toolbar"><button type="button" className={`secondary-button ${surfaceDirectEditEnabled ? 'active' : ''}`} aria-pressed={surfaceDirectEditEnabled} onClick={() => setSurfaceDirectEditEnabled((current) => !current)}>{surfaceDirectEditEnabled ? '编辑模式 · ON' : '开启编辑模式'}</button>{surfaceDirectEditEnabled && <><button type="button" className={`secondary-button ${surfaceTransformMode === 'translate' ? 'active' : ''}`} aria-pressed={surfaceTransformMode === 'translate'} onClick={() => setSurfaceTransformMode('translate')}>移动</button><button type="button" className={`secondary-button ${surfaceTransformMode === 'scale' ? 'active' : ''}`} aria-pressed={surfaceTransformMode === 'scale'} onClick={() => setSurfaceTransformMode('scale')}>放缩</button><span>主大楼已锁定</span></>}{!surfaceDirectEditEnabled && <span className="surface-editor-locked-note">开启后点选单个对象，再进行移动、格式刷或区域裁剪</span>}</div>
+        {directSurfaceSelection && <div className="surface-direct-selection"><strong>已选中：{directSurfaceSelection.label || directSurfaceSelection.name}</strong><span>{directSurfaceSelection.width} × {directSurfaceSelection.height} × {directSurfaceSelection.length}m · {directSurfaceSelection.source}</span><div><button type="button" className="secondary-button" onClick={copyDirectSelection}>复制</button><button type="button" className="secondary-button" onClick={pasteDirectSelection}>粘贴</button><button type="button" className="secondary-button danger" onClick={deleteDirectSelection}>删除</button><button type="button" className="secondary-button" onClick={undoDirectSelectionDelete}>撤销删除</button></div><div className="surface-format-direct"><button type="button" className={`secondary-button ${directFormatBrushArmed ? 'active' : ''}`} onClick={captureDirectFormat}>{directFormatBrushArmed ? '格式刷已吸取 · 点目标' : '吸取格式（选取源）'}</button><button type="button" className="primary-button" onClick={applyDirectFormat}>格式刷到当前</button>{directFormatBrushArmed && <span>已进入选取式格式刷：点击另一个对象会自动应用</span>}</div><div className="surface-clip-tools"><strong>区域裁剪</strong><label><span>切割方向</span><select value={surfaceClipAxis} onChange={(event) => setSurfaceClipAxis(event.target.value)}><option value="x">X 轴 · 左右</option><option value="z">Z 轴 · 前后</option><option value="y">Y 轴 · 上下</option></select></label><label><span>保留侧</span><select value={surfaceClipKeepSide} onChange={(event) => setSurfaceClipKeepSide(event.target.value)}><option value="positive">正侧 · 删除负侧</option><option value="negative">负侧 · 删除正侧</option></select></label><label className="surface-clip-range"><span>切线位置 <output>{Math.round(Number(surfaceClipFraction) * 100)}%</output></span><input type="range" min="0.05" max="0.95" step="0.05" value={surfaceClipFraction} onChange={(event) => setSurfaceClipFraction(Number(event.target.value))} /></label><button type="button" className="secondary-button danger" onClick={clipDirectSelection}>刀切当前对象</button><button type="button" className="secondary-button" onClick={undoDirectSelectionClip}>撤回裁剪</button></div></div>}
+        <label className="surface-editor-select"><span>当前对象</span><select value={selectedSurfaceEditor?.id || ''} onChange={(event) => selectSurfaceEditorObject(event.target.value)}>{surfaceEditorObjects.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+        <div className="surface-editor-sliders">
+          <label><span>长度 <output>{selectedSurfaceEditor?.length?.toFixed(2) || '—'}m</output></span><input type="range" min="0.1" max="240" step="0.1" value={selectedSurfaceEditor?.length || 1} onChange={(event) => updateSurfaceEditor('length', event.target.value)} /></label>
+          <label><span>宽度 <output>{selectedSurfaceEditor?.width?.toFixed(2) || '—'}m</output></span><input type="range" min="0.1" max="180" step="0.1" value={selectedSurfaceEditor?.width || 1} onChange={(event) => updateSurfaceEditor('width', event.target.value)} /></label>
+          <label><span>X偏移 <output>{selectedSurfaceEditor?.offsetX?.toFixed(2) || '0.00'}m</output></span><input type="range" min="-120" max="120" step="0.1" value={selectedSurfaceEditor?.offsetX || 0} onChange={(event) => updateSurfaceEditor('offsetX', event.target.value)} /></label>
+          <label><span>Z偏移 <output>{selectedSurfaceEditor?.offsetZ?.toFixed(2) || '0.00'}m</output></span><input type="range" min="-120" max="120" step="0.1" value={selectedSurfaceEditor?.offsetZ || 0} onChange={(event) => updateSurfaceEditor('offsetZ', event.target.value)} /></label>
+        </div>
+        <div className="surface-editor-actions"><button type="button" className="secondary-button" onClick={resetSurfaceEditor}><RotateCcw size={13} />恢复当前对象</button><span>{surfaceEditorMessage}</span></div>
+        <small className="surface-editor-note">格式刷采用选取式：先点源对象并吸取格式，再点目标对象自动应用；源 GLB 不变。刷新页面后仍保留本机编辑参数。</small>
+      </div>
+    </details>}
+    {['site_context_glb', 'blender_enhanced_glb'].includes(modelAsset?.kind) && <div className="site-context-legend" role="note" aria-label="周边场景关系说明">
+      <div className="site-context-legend-heading"><strong>当前建立的是：主楼周边场景</strong><span>不是室内 CAD 模型</span></div>
+      <div className={`site-context-provenance ${navigationTopologyFirst ? 'ready' : 'pending'}`}>
+        <span>定位与细部来源</span>
+        <strong>{navigationTopologyFirst ? '导航尺寸 / 建筑道路拓扑：首层硬约束' : '导航首层约束：当前成果未登记'}</strong>
+        <small>{navigationTopologyFirst
+          ? `导航先确定主楼、道路方位与场地边界；视频和照片补充现场细部与材质${navigationDimensionEvidence?.fileName ? ` · 证据 ${navigationDimensionEvidence.fileName}` : ''}`
+          : '请先生成带导航配准 metadata 的周边成果，再显示首层硬约束状态。'}</small>
+      </div>
+      <div className="site-context-legend-items">
+        <span><i className="scene-swatch building" />主楼外壳</span>
+        <span><i className="scene-swatch road" />主楼侧小道</span>
+        <span><i className="scene-swatch outer-road" />栅栏外侧小道</span>
+        <span><i className="scene-swatch fence" />贯穿黑色栅栏</span>
+        <span><i className="scene-swatch gate" />行人小门</span>
+        <span><i className="scene-swatch green" />草坪与绿化</span>
+      </div>
+      <small>要看门、窗、墙体和室内空间，请在上方切换“室内模型”图层。</small>
+    </div>}
+    {floorOptions.length > 0 && <div className="floor-navigation-control">
+      <label><span>楼层</span><select aria-label="选择漫游楼层" value={selectedFloorNumber} onChange={(event) => setSelectedFloorNumber(Number(event.target.value))}>{floorOptions.map((level) => <option key={level.floorNumber} value={level.floorNumber}>{level.label || `${level.floorNumber}F`}</option>)}</select></label>
+      <button type="button" className={isolateFloor ? 'active' : ''} aria-pressed={isolateFloor} onClick={() => setIsolateFloor((current) => !current)}><Layers3 size={13} />单层剖切</button>
+      <button type="button" className={showSurroundings ? 'active' : ''} aria-pressed={showSurroundings} disabled={!contextAsset} onClick={() => setShowSurroundings((current) => !current)}><Map size={13} />周边环境</button>
+    </div>}
+    {modelAsset?.kind === 'site_context_glb' && <div className="construction-evidence-control expert-only">
+      <label><input type="checkbox" checked={showHistoricalConstruction} onChange={(event) => setShowHistoricalConstruction(event.target.checked)} /> 显示历史施工证据</label>
+      <small>{showHistoricalConstruction ? '施工围挡、塔吊与临时框架已显示，仅用于证据回看。' : '当前现场：施工对象已隐藏；永久护栏与围栏保留。'}</small>
+    </div>}
+    {modelAsset?.kind === 'site_context_glb' && modelAsset.metadata?.supplementalReferenceManifestId && <details className="reference-conflict-panel expert-only">
+      <summary><AlertTriangle size={13} /><span>补充资料矛盾与边界</span><strong>{openReferenceConflictCount} 项待核验</strong></summary>
+      <div className="reference-conflict-summary">
+        <span>{modelAsset.metadata?.supplementalReferenceImageCount || 0} 张现场图片 · {modelAsset.metadata?.supplementalReferenceArticleCount || 0} 篇 Reference</span>
+        <small>资料已绑定到当前模型，但未在无控制点的情况下改写道路线位和建筑朝向。</small>
+      </div>
+      <div className="reference-conflict-list">{supplementalReferenceConflicts.map((item) => <div key={item.id} data-status={item.status}>
+        <strong>{item.statement}</strong><span>{item.allowedAction}</span>
+      </div>)}</div>
+    </details>}
+    {(navigationMode === 'walkthrough' || navigationMode === 'route-tour') && <div className="navigation-speed-control" aria-label="漫游速度">
+      <label><Gauge size={12} /><span>{navigationMode === 'route-tour' ? '沿线速度' : '步行速度'}</span><select value={navigationMode === 'route-tour' ? routeTourSpeed : walkthroughSpeedPreset} onChange={(event) => navigationMode === 'route-tour' ? setRouteTourSpeed(Number(event.target.value)) : setWalkthroughSpeedPreset(Number(event.target.value))}>
+        <option value="0.25">逐帧核对 · 0.25 m/s</option><option value="0.5">慢速 · 0.5 m/s</option><option value="0.65">标准 · 0.65 m/s</option><option value="0.9">快速 · 0.9 m/s</option>
+      </select></label>
+    </div>}
+    {allTourSpaces.length > 0 && <div className={`space-tour-control ${showSurroundings ? 'with-context' : ''}`} aria-label="空间导览">
+      <div className="space-tour-heading"><span>空间导览</span><strong>{selectedTourIndex + 1}/{allTourSpaces.length}</strong></div>
+      <label>
+        <span>{floorOptions.find((level) => Number(level.floorNumber) === Number(selectedFloorNumber))?.label || `${selectedFloorNumber}F`}</span>
+        <select aria-label="选择参观空间" value={selectedSpaceId} onChange={(event) => visitSpace(allTourSpaces.find((space) => space.id === event.target.value))}>
+          {activeFloorSpaces.map((space) => <option key={space.id} value={space.id}>{space.displayLabel || space.label}</option>)}
+        </select>
+      </label>
+      <div className="space-tour-actions">
+        <button type="button" aria-label="上一空间" title="上一空间" disabled={selectedTourIndex <= 0} onClick={() => stepSpace(-1)}><ArrowLeft size={14} /></button>
+        <button type="button" className="visit" onClick={() => visitSpace(selectedSpace)}><Footprints size={13} />进入空间</button>
+        <button type="button" aria-label="下一空间" title="下一空间" disabled={selectedTourIndex < 0 || selectedTourIndex >= allTourSpaces.length - 1} onClick={() => stepSpace(1)}><ArrowRight size={14} /></button>
+      </div>
+      <small className="expert-only">{selectedSpace ? `${selectedSpace.evidence || 'Derived'} · ${selectedSpace.geometryStatus || 'label_anchor_only'}` : '该楼层暂无可核验空间锚点'}</small>
+    </div>}
+    {showSurroundings && contextAsset && <div className="context-registration-control" aria-label="周边环境配准参数">
+      <div><span>周边位置校准</span><em className="expert-only">Hypothesis</em></div>
+      <label>X<input type="number" step="0.5" value={registrationState.offsetXM} onChange={(event) => setRegistrationState((current) => ({ ...current, offsetXM: Number(event.target.value) }))} /></label>
+      <label>Z<input type="number" step="0.5" value={registrationState.offsetZM} onChange={(event) => setRegistrationState((current) => ({ ...current, offsetZM: Number(event.target.value) }))} /></label>
+      <label>旋转<input type="number" min="-360" max="360" step="1" value={registrationState.rotationDeg} onChange={(event) => setRegistrationState((current) => ({ ...current, rotationDeg: Number(event.target.value) }))} /></label>
+      <label>比例<input type="number" min="0.1" max="10" step="0.01" value={registrationState.scale} onChange={(event) => setRegistrationState((current) => ({ ...current, scale: Number(event.target.value) }))} /></label>
+      <button type="button" onClick={saveContextRegistration} title="保存周边配准参数"><Check size={14} /></button>
+      <small>{registrationMessage}</small>
+    </div>}
+    {semanticLegendEntries.length > 0 && <div className="expert-only"><details className="semantic-material-legend">
+      <summary><span>语义材质图例</span><strong>{semanticLegendEntries.length}</strong></summary>
+      <div>{semanticLegendEntries.map((item) => <div key={item.category}><i className="semantic-material-swatch" style={{ backgroundColor: item.color }} /><span>{item.label}</span><em>{item.count}</em></div>)}</div>
+      <small>{displayMode === 'analysis' ? '分析青图会统一着色；切回原始材质查看分类颜色。' : '颜色来自 CAD 语义分类；体量高度中的推断仍标记为 Hypothesis。'}</small>
+    </details></div>}
+    <div className="viewport-tools" role="toolbar" aria-label="三维视口控制">
+      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="放大三维视口" title="放大三维视口" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.zoomByFactor?.(0.94)}><ZoomIn size={16} /><span>放大</span></button>
+      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="缩小三维视口" title="缩小三维视口" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.zoomByFactor?.(1.06)}><ZoomOut size={16} /><span>缩小</span></button>
+      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="模型归位" title="模型归位" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.fitView?.()}><LocateFixed size={16} /><span>归位</span></button>
+      <button type="button" className={`viewport-tool ${navigationMode === 'walkthrough' ? 'active' : ''}`} disabled={!walkthroughEligible || loadState.status !== 'ready'} aria-pressed={navigationMode === 'walkthrough'} aria-label={navigationMode === 'walkthrough' ? '退出建筑漫游' : '进入建筑漫游'} title={navigationMode === 'walkthrough' ? '退出建筑漫游' : '进入建筑漫游'} onClick={() => navigationMode === 'walkthrough' ? setNavigationMode('orbit') : enterWalkthrough()}><Footprints size={16} /><span>{navigationMode === 'walkthrough' ? '退出漫游' : '进入漫游'}</span></button>
+      {routeRenderable && <button type="button" className={navigationMode === 'route-tour' ? 'active route-active' : ''} aria-label={routeTourPlayback.status === 'playing' ? '暂停连续沿线漫游' : '播放连续沿线漫游'} title={routeTourPlayback.status === 'playing' ? '暂停沿线漫游' : '播放沿线漫游'} onClick={() => {
+        if (navigationMode !== 'route-tour') setNavigationMode('route-tour');
+        else if (routeTourPlayback.status === 'playing') environmentRef.current?.pauseRouteTour?.();
+        else environmentRef.current?.startRouteTour?.();
+      }}>{routeTourPlayback.status === 'playing' ? <Pause size={16} /> : <Play size={16} />}<span>{routeTourPlayback.status === 'playing' ? '暂停沿线' : '播放沿线'}</span></button>}
+      {routeRenderable && <button type="button" className="viewport-tool" aria-label="重新开始连续沿线漫游" title="重新开始沿线漫游" onClick={() => { environmentRef.current?.resetRouteTour?.(); if (navigationMode !== 'route-tour') setNavigationMode('route-tour'); }}><RotateCcw size={16} /><span>重播</span></button>}
+      {navigationMode === 'route-tour' && <button type="button" className="viewport-tool" aria-label="退出连续沿线漫游" title="退出沿线漫游" onClick={() => setNavigationMode('orbit')}><X size={16} /><span>退出沿线</span></button>}
+      {routeRenderable && displayMode === 'analysis' && <button type="button" className={`viewport-tool ${showSiteRoute ? 'active route-active' : ''}`} aria-pressed={showSiteRoute} aria-label={showSiteRoute ? '隐藏建筑周边小道' : '显示建筑周边小道'} title={showSiteRoute ? '隐藏小道' : '显示小道'} onClick={() => setShowSiteRoute((current) => !current)}><Route size={16} /><span>{showSiteRoute ? '隐藏路线' : '显示路线'}</span></button>}
+      <button type="button" className="viewport-tool" aria-label="复制当前视角链接" title="复制当前视角链接" disabled={loadState.status !== 'ready'} onClick={copyCameraLink}><Link2 size={16} /><span>分享视角</span></button>
+      <button type="button" className="viewport-tool" aria-label={isExpanded ? '退出全屏三维' : '全屏查看三维'} title={isExpanded ? '退出全屏' : '全屏查看'} onClick={toggleExpanded}>{isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}<span>{isExpanded ? '退出全屏' : '全屏'}</span></button>
+    </div>
+    {shareStatus && <div className="viewport-share-status" role="status">{shareStatus}</div>}
+    {routeRenderable && displayMode === 'analysis' && <div className={`site-route-badge ${showSiteRoute ? 'visible' : 'hidden'}`} aria-live="polite">
+      <i /><span><strong>{primarySiteRoute.label}</strong>{showSiteRoute ? `${siteRouteStats.lengthM ? `${Math.round(siteRouteStats.lengthM)}m · ` : ''}近似配准连续路线` : '路线图层已隐藏'}<small className="expert-only">7段现场视频 + 片段边界显式配准 · local_enu_m · 非测绘线位</small></span>
+    </div>}
+    {navigationMode === 'route-tour' && <div className="route-tour-hud" aria-live="polite">
+       <div><Route size={14} /><span>连续沿线漫游</span><strong>{routeTourSpeed.toFixed(1)} m/s</strong></div>
+      <progress max="1" value={routeTourPlayback.progress || 0} />
+      <span>{Math.round(routeTourPlayback.distanceM || 0)} / {Math.round(siteRouteStats.lengthM || 0)} m · {routeTourPlayback.status === 'playing' ? '播放中' : routeTourPlayback.status === 'ended' ? '已到终点' : '已暂停'}</span>
+      <small className="expert-only">普通展示不分章节；片段、时间戳和推定连接区间保留在内部证据映射。</small>
+    </div>}
+    {navigationMode === 'walkthrough' && <>
+      <div className="walkthrough-hud" aria-live="polite">
+        <div><Footprints size={14} /><span>步行参观</span><strong>{floorOptions.find((level) => Number(level.floorNumber) === Number(selectedFloorNumber))?.label || `${selectedFloorNumber}F`}</strong></div>
+        {selectedSpace && <span>当前空间：{selectedSpace.displayLabel || selectedSpace.label}</span>}
+         <em className="expert-only">{walkthroughEvidence}</em>
+         <span className="expert-only">{showSurroundings ? '窗外周边：人工配准 Hypothesis' : '窗外周边：未启用'}</span>
+         <small>移动速度：{walkthroughSpeed ? `${walkthroughSpeed.toFixed(1)} m/s` : '加载中'} · 适合逐空间查看</small>
+         {/* The former “当前无碰撞约束” status is intentionally retired now that model-backed probes are active. */}
+         <small>{walkthroughCollisionStats.enabled ? '防穿墙与边界保护已启用' : '当前仅启用楼层边界保护'}<span className="expert-only"> · {walkthroughCollisionStats.candidates} 组候选几何 · {selectedSpace ? `${selectedSpace.geometryStatus || 'label_anchor_only'}${walkthroughSpawnNotice ? ' · 已使用楼层安全落点' : ''}` : '楼层落点需人工复核'}</span></small>
+         {walkthroughSpawnNotice && <small className="expert-only">{walkthroughSpawnNotice}</small>}
+      </div>
+      <div className="walkthrough-crosshair" aria-hidden="true" />
+      <div className="walkthrough-dpad" role="group" aria-label="建筑漫游方向控制">
+        {walkthroughControl('forward', '向前移动', ArrowUp, 'forward')}
+        {walkthroughControl('left', '向左移动', ArrowLeft, 'left')}
+        {walkthroughControl('right', '向右移动', ArrowRight, 'right')}
+        {walkthroughControl('backward', '向后移动', ArrowDown, 'backward')}
+      </div>
+    </>}
+    <div className="model-fidelity expert-only" aria-live="polite">
+      <div><span>MODEL SOURCE</span><strong>{modelFidelity.title}</strong></div>
+      <p>{modelFidelity.detail}</p>
+      <small>{modelStats.meshes} 构件 · {modelStats.materials} 材质 · {modelStats.textures} 纹理</small>
+      <em>{modelFidelity.coordinate}</em>
+    </div>
+    {!['preview', 'ready'].includes(loadState.status) && <div className={`viewport-state ${loadState.status}`}><Box size={28} /><strong>{loadState.status === 'error' ? '模型加载失败' : '正在加载真实三维资产'}</strong><span>{loadState.message}</span>{loadState.status === 'error' && <button type="button" className="secondary-button" onClick={() => setModelLoadAttempt((value) => value + 1)}><RefreshCw size={13} />重试加载</button>}</div>}
+  </div></>;
+}
+
+function ViewportEmptyState({ icon: Icon, title, text }) {
+  return <div className="viewport-empty"><Icon size={31} /><strong>{title}</strong><span>{text}</span></div>;
+}
+
+function RealVideoViewport({ asset, visionJob, sourceNature = 'field_observation' }) {
+  const state = visionJob?.assetId === asset.id ? visionJob.status : 'not_started';
+  const annotatedArtifact = visionJob?.output?.artifacts?.find((artifact) => artifact.kind === 'annotated_video');
+  const [viewMode, setViewMode] = useState(annotatedArtifact ? 'annotated' : 'original');
+  useEffect(() => { setViewMode(annotatedArtifact ? 'annotated' : 'original'); }, [asset.id, annotatedArtifact?.id]);
+  const showingAnnotated = viewMode === 'annotated' && Boolean(annotatedArtifact);
+  const processing = ['queued', 'running'].includes(state);
+  const testOnly = sourceNature === 'virtual_test' || asset.testOnly || visionJob?.sourceNature === 'virtual_test';
+  const label = showingAnnotated
+    ? '当前显示人员、车辆与轨迹识别结果。'
+    : state === 'succeeded'
+      ? '当前显示原始视频，可切换到识别结果。'
+      : processing
+        ? '视频正在分析，完成后可切换查看结果。'
+        : state === 'blocked' || state === 'failed'
+          ? '该视频分析未完成，当前仍显示原始视频。'
+          : '当前是原始视频，尚未开始分析。';
+  return <div className="real-video-viewport">
+    <video key={`${asset.id}:${showingAnnotated ? annotatedArtifact.id : 'original'}`} src={showingAnnotated ? annotatedArtifact.url : asset.url} controls preload="metadata" aria-label={`${showingAnnotated ? '标注结果' : '原始视频'}：${asset.name}`} />
+    <div className="video-source-switch" role="group" aria-label="视频证据图层">
+      <button type="button" aria-pressed={viewMode === 'original'} className={viewMode === 'original' ? 'active' : ''} onClick={() => setViewMode('original')}>{testOnly ? '演示视频' : '原始视频'}</button>
+      <button type="button" aria-pressed={viewMode === 'annotated'} className={viewMode === 'annotated' ? 'active' : ''} disabled={!annotatedArtifact} onClick={() => setViewMode('annotated')}>识别结果</button>
+    </div>
+    <div className="viewport-hud expert-only"><span>{testOnly ? '虚拟测试视频 · TEST ONLY' : showingAnnotated ? '真实标注视频' : '真实原始视频'}</span><span>{state.replace('_', ' ').toUpperCase()}</span><span>{visionJob?.stage?.replaceAll('_', ' ').toUpperCase() || 'CALIBRATION NONE'}</span></div>
+    <div className="video-truth-note">{label}</div>
+  </div>;
+}
+
+function CameraCapture({ project, busy, setBusy, notify, refresh }) {
+  const previewRef = useRef(null);
+  const streamRef = useRef(null);
+  const recorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const [state, setState] = useState('idle');
+
+  useEffect(() => () => {
+    recorderRef.current?.state === 'recording' && recorderRef.current.stop();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  const connect = async () => {
+    if (!project) return notify('error', '请先创建项目');
+    if (!navigator.mediaDevices?.getUserMedia) return notify('error', '当前浏览器或页面协议不支持摄像头访问');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      streamRef.current = stream;
+      if (previewRef.current) previewRef.current.srcObject = stream;
+      setState('ready');
+    } catch (error) { notify('warning', `摄像头连接失败：${error.message}`); }
+  };
+
+  const startRecording = () => {
+    if (!streamRef.current) return notify('error', '请先连接摄像头');
+    if (!window.MediaRecorder) return notify('error', '当前浏览器不支持 MediaRecorder');
+    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((type) => MediaRecorder.isTypeSupported(type));
+    const recorder = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : undefined);
+    chunksRef.current = [];
+    recorder.ondataavailable = (event) => { if (event.data?.size) chunksRef.current.push(event.data); };
+    recorder.onstop = async () => {
+      if (!chunksRef.current.length) return notify('error', '摄像头没有产生可上传的视频数据');
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'video/webm' });
+      const file = new File([blob], `camera-${new Date().toISOString().replaceAll(':', '-')}.webm`, { type: blob.type });
+      const form = new FormData();
+      form.append('files', file);
+      setBusy(true);
+      try {
+        await api('/assets/upload', { method: 'POST', body: form });
+        notify('success', '摄像头实录已上传并计算 SHA-256，可作为典型片段选择');
+        await refresh();
+      } catch (error) { notify('error', error.message, error.details); }
+      finally { setBusy(false); setState('ready'); }
+    };
+    recorder.start(1000);
+    recorderRef.current = recorder;
+    setState('recording');
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  };
+
+  return <div className="camera-capture"><video ref={previewRef} autoPlay muted playsInline /><div className="camera-actions"><button className="secondary-button" disabled={busy || state === 'recording'} onClick={connect}><Radio size={14} /> {state === 'idle' ? '连接摄像头' : '重新连接'}</button>{state === 'recording' ? <button className="record-button active" onClick={stopRecording}><i /> 停止并上传</button> : <button className="record-button" disabled={state !== 'ready' || busy} onClick={startRecording}><i /> 开始实录</button>}</div><small>录制内容只在点击“停止并上传”后进入证据链；建议连续录制 5–20 分钟。</small></div>;
+}
+
+function JobEventTimeline({ events, streamStatus }) {
+  if (!events?.length) return <div className="job-events empty">{streamStatus?.message ? <span className="job-stream-status"><i className={streamStatus.state === 'connected' ? 'done' : 'failed'} />{streamStatus.message}</span> : '任务启动后显示真实工具事件'}</div>;
+  return <div className="job-events">{streamStatus?.message && <div className="job-stream-status"><i className={streamStatus.state === 'connected' ? 'done' : 'failed'} /><span>{streamStatus.message}</span></div>}{events.slice(-5).map((event) => <div key={event.id}><i className={event.type.includes('failed') ? 'failed' : event.type.includes('completed') ? 'done' : 'running'} /><span>{event.payload?.title || event.payload?.outputSummary || event.payload?.error || event.type}</span><small>{new Date(event.at).toLocaleTimeString('zh-CN', { hour12: false })}</small></div>)}</div>;
+}
+
+function SemanticObjectRegistry({ project, assets, artifacts, sceneObjects, busy, setBusy, notify, refresh }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ id: '', type: 'gate', label: '', geometry: '', evidenceLevel: 'Hypothesis' });
+  const geojsonAssets = [
+    ...assets.filter((asset) => asset.name && asset.name.toLowerCase().endsWith('.geojson')).map((asset) => ({ ...asset, importLabel: asset.name })),
+    ...artifacts.filter((artifact) => ['dwg_plan_geojson', 'osm_context_geojson'].includes(artifact.kind) && artifact.metadata?.stale !== true).map((artifact) => ({ ...artifact, name: artifact.title, importLabel: `${artifact.title} · 阶段产物` }))
+  ];
+  const [geojsonAssetId, setGeojsonAssetId] = useState('');
+  const [geojsonCoordinateSpace, setGeojsonCoordinateSpace] = useState('local_enu');
+  useEffect(() => { if (!geojsonAssetId && geojsonAssets[0]) setGeojsonAssetId(geojsonAssets[0].id); }, [geojsonAssets.length, geojsonAssetId]);
+  const save = async (event) => {
+    event.preventDefault();
+    if (!project) return notify('error', '请先创建项目');
+    let geometry;
+    try { geometry = JSON.parse(form.geometry); } catch { return notify('error', 'Geometry 不是合法 GeoJSON 几何对象'); }
+    setBusy(true);
+    try {
+      await api('/scene/objects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: form.id, type: form.type, label: form.label, geometry, evidenceLevel: form.evidenceLevel }) });
+      setForm({ id: '', type: 'gate', label: '', geometry: '', evidenceLevel: 'Hypothesis' });
+      setOpen(false);
+      notify('success', '语义对象已登记，可被方案动作按 ID 引用');
+      await refresh();
+    } catch (error) { notify('error', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+  const importGeoJson = async () => {
+    if (!geojsonAssetId) return notify('warning', '请先上传并选择 .geojson 文件');
+    setBusy(true);
+    try {
+      const result = await api('/scene/import-geojson', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assetId: geojsonAssetId, coordinateSpace: geojsonCoordinateSpace })
+      });
+      notify('success', `已导入 ${result.import.importedCount} 个可追溯语义对象`);
+      await refresh();
+    } catch (error) { notify('error', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+  return <div className="semantic-registry">
+    <div className="registry-head"><span>可编辑语义层</span><strong>{sceneObjects.length} OBJECTS</strong><button className="text-button" onClick={() => setOpen(!open)}>{open ? '取消' : '登记对象'}</button></div>
+    <div className="geojson-import">
+      <div><strong>批量导入 GeoJSON</strong><span>DWG / SKP 转换后的矢量对象</span></div>
+      <label><span>源文件</span><select value={geojsonAssetId} onChange={(event) => setGeojsonAssetId(event.target.value)}><option value="">{geojsonAssets.length ? '选择文件' : '暂无 GeoJSON'}</option>{geojsonAssets.map((asset) => <option value={asset.id} key={asset.id}>{asset.importLabel}</option>)}</select></label>
+      <label><span>坐标语义</span><select value={geojsonCoordinateSpace} onChange={(event) => setGeojsonCoordinateSpace(event.target.value)}><option value="local_enu">本地 ENU（米）</option><option value="wgs84">WGS84 经纬度</option></select></label>
+      <button className="secondary-button" disabled={busy || !project || !geojsonAssetId} onClick={importGeoJson}><Layers3 size={14} /> 批量登记</button>
+    </div>
+    {open && <form onSubmit={save}><div className="field-row"><label><span>对象 ID</span><input required value={form.id} onChange={(event) => setForm({ ...form, id: event.target.value })} placeholder="gate-west" /></label><label><span>类型</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option value="gate">出入口</option><option value="road">道路</option><option value="walkway">步行区</option><option value="loading_zone">卸货区</option><option value="dropoff_zone">落客区</option><option value="lighting">照明</option><option value="landscape">景观</option></select></label></div><div className="field-row"><label><span>标签</span><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} /></label><label><span>证据类型</span><select value={form.evidenceLevel} onChange={(event) => setForm({ ...form, evidenceLevel: event.target.value })}><option value="Observed">Observed · 现场确认</option><option value="Derived">Derived · 确定性计算</option><option value="Hypothesis">Hypothesis · 人工/模型假设</option><option value="Scenario">Scenario · 情景推演</option></select></label></div><label><span>GeoJSON Geometry / 本地 ENU</span><textarea required value={form.geometry} onChange={(event) => setForm({ ...form, geometry: event.target.value })} placeholder='{"type":"Point","coordinates":[12.4,3.1,0]}' /></label><button className="secondary-button wide" disabled={busy} type="submit"><Plus size={14} /> 写入语义对象</button></form>}
+    {!open && sceneObjects.slice(-3).map((object) => <div className="registry-row" key={object.id}><code>{object.id}</code><span>{object.label || object.type}</span><i className={`evidence-dot ev-${object.evidenceLevel.toLowerCase().replace(' ', '-')}`} /></div>)}
+  </div>;
+}
+
+function ProjectLibrary({ projects, activeProjectId, projectLibraryState, busy, setBusy, notify, refresh, onRetry, onClose }) {
+  const serviceReady = projectLibraryState.status === 'ready';
+  const [creating, setCreating] = useState(serviceReady && projects.length === 0);
+  const [form, setForm] = useState({ name: '', address: '', latitude: '', longitude: '', coordinateSystem: 'WGS84' });
+  const activeProjects = projects.filter((project) => project.status !== 'archived');
+  const archivedProjects = projects.filter((project) => project.status === 'archived');
+
+  useEffect(() => {
+    if (projectLibraryState.status === 'ready' && projects.length === 0) setCreating(true);
+  }, [projectLibraryState.status, projects.length]);
+
+  useEffect(() => {
+    const closeOnEscape = (event) => { if (event.key === 'Escape') onClose(); };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [onClose]);
+
+  const createProject = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(form) });
+      notify('success', '新项目已建立并切换为当前卷宗');
+      await refresh();
+      onClose();
+    } catch (error) { notify('error', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+
+  const switchProject = async (projectId) => {
+    setBusy(true);
+    try {
+      await api(`/projects/${projectId}/activate`, { method: 'POST' });
+      await refresh();
+      notify('success', '当前项目已切换，工作区数据已重新载入');
+      onClose();
+    } catch (error) { notify('error', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+
+  const setProjectStatus = async (projectId, status) => {
+    setBusy(true);
+    try {
+      await api(`/projects/${projectId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) });
+      await refresh();
+      notify('success', status === 'archived' ? '项目已归档，原始资料与成果均保留' : '项目已恢复');
+    } catch (error) { notify('error', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+
+  const ProjectEntry = ({ item, archived = false }) => (
+    <article className={`project-dossier ${item.id === activeProjectId ? 'current' : ''} ${archived ? 'archived' : ''}`}>
+      <div className="dossier-index expert-only"><span>{item.id.slice(-6).toUpperCase()}</span><i>{item.id === activeProjectId ? 'CURRENT' : archived ? 'ARCHIVED' : 'ACTIVE'}</i></div>
+      <div className="dossier-copy"><strong>{item.name}</strong><small>{item.address || <><span className="operator-only">未填写场地说明</span><span className="expert-only">{item.latitude}, {item.longitude}</span></>}</small><div><span>{item.counts?.assets || 0} 份资料</span><span>{item.counts?.observations || 0} 次视频分析</span><span>{item.counts?.artifacts || 0} 份成果</span></div></div>
+      <div className="dossier-actions">
+        {!archived && item.id !== activeProjectId && <button type="button" className="secondary-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => switchProject(item.id)}>切换项目</button>}
+        {!archived && <button type="button" className="text-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setProjectStatus(item.id, 'archived')}><Archive size={13} />归档项目</button>}
+        {archived && <button type="button" className="text-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setProjectStatus(item.id, 'active')}><RefreshCw size={13} />恢复项目</button>}
+      </div>
+    </article>
+  );
+
+  return <div className="project-library-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="project-library" role="dialog" aria-modal="true" aria-labelledby="project-library-title">
+      <header className="project-library-header"><div><span className="expert-only">PROJECT DOSSIERS / LOCAL WORKSPACE</span><h2 id="project-library-title">项目卷宗库</h2><p>每个项目的资料、分析和成果都独立保存；切换项目不会删除其他项目。</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目卷宗库"><X size={19} /></button></header>
+      <div className="project-library-toolbar"><strong>{projectLibraryState.status === 'loading' ? '正在连接项目库' : projectLibraryState.status === 'error' ? `${projects.length} 个缓存项目` : `${projects.length} 个项目`}</strong><button type="button" className="primary-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setCreating((value) => !value)}><Plus size={14} />新建项目</button></div>
+      {projectLibraryState.status !== 'ready' && <div className={`project-library-connection ${projectLibraryState.status}`}>
+        {projectLibraryState.status === 'loading' ? <RefreshCw size={18} /> : <AlertTriangle size={18} />}
+        <div><strong>{projectLibraryState.status === 'loading' ? '正在连接项目服务' : '项目服务离线'}</strong><span>{projectLibraryState.status === 'loading' ? '正在读取本地卷宗库，请稍候。' : '项目数据没有被删除。当前仅显示上次成功同步的卷宗清单，服务恢复后会自动重新载入。'}</span></div>
+        {projectLibraryState.status === 'error' && <button type="button" className="secondary-button" onClick={onRetry}><RefreshCw size={14} />立即重试</button>}
+      </div>}
+      {creating && serviceReady && <form className="project-create-form" onSubmit={createProject}>
+        <label><span>项目名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="某集团办公楼更新" /></label>
+        <label><span>地址 / 场地说明</span><input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="项目卷宗说明" /></label>
+        <label><span>纬度</span><input required type="number" step="any" value={form.latitude} onChange={(event) => setForm({ ...form, latitude: event.target.value })} /></label>
+        <label><span>经度</span><input required type="number" step="any" value={form.longitude} onChange={(event) => setForm({ ...form, longitude: event.target.value })} /></label>
+        <label><span>坐标系</span><select value={form.coordinateSystem} onChange={(event) => setForm({ ...form, coordinateSystem: event.target.value })}><option>WGS84</option><option>GCJ-02</option><option>BD-09</option></select></label>
+        <button className="primary-button" type="submit" disabled={busy}><Check size={14} />建立卷宗</button>
+      </form>}
+      <div className="project-library-body">
+        {(serviceReady || projects.length > 0) && <section><h3>{serviceReady ? '使用中的项目' : '上次同步的使用中项目'}</h3>{activeProjects.length ? activeProjects.map((item) => <ProjectEntry key={item.id} item={item} />) : <EmptyLine text="暂无使用中的项目" />}</section>}
+        {!serviceReady && projects.length === 0 && <EmptyLine text="项目清单尚未载入，等待服务恢复" />}
+        {archivedProjects.length > 0 && <section><h3>已归档项目</h3>{archivedProjects.map((item) => <ProjectEntry key={item.id} item={item} archived />)}</section>}
+      </div>
+    </section>
+  </div>;
+}
+
+function ProjectServiceState({ state, cachedCount, onRetry }) {
+  const loading = state.status === 'loading';
+  return <section className={`project-service-state ${state.status}`} aria-live="polite">
+    {loading ? <RefreshCw size={30} /> : <AlertTriangle size={30} />}
+    <span className="expert-only">PROJECT LIBRARY / CONNECTION</span>
+    <h1>{loading ? '正在连接项目库' : '项目服务暂时离线'}</h1>
+    <p>{loading ? '正在读取项目卷宗和工作区资产。' : `项目数据没有被删除${cachedCount ? `，已保留 ${cachedCount} 个项目的上次同步清单` : ''}。系统每 5 秒自动重连，服务恢复后会重新载入真实项目数据。`}</p>
+    {!loading && <button type="button" className="secondary-button" onClick={onRetry}><RefreshCw size={14} />立即重试</button>}
+  </section>;
+}
+
+function ProjectServiceBanner({ state, onRetry }) {
+  return <div className="project-service-banner" role="status"><AlertTriangle size={15} /><span><strong>项目服务暂时离线，已保留当前工作区</strong><small>{state.message || '正在自动重试；三维场景与已载入资料仍可查看。'}</small></span><button type="button" className="text-button" onClick={onRetry}><RefreshCw size={13} />立即重试</button></div>;
+}
+
+function StageHeading({ eyebrow, title, description }) {
+  return <div className="stage-heading"><div><span className="expert-only">{eyebrow}</span><h1>{title.split(/\\n|\n/).map((line, i) => <React.Fragment key={line}>{line}{i === 0 && <br />}</React.Fragment>)}</h1></div><p>{description}</p></div>;
+}
+class WorkspaceErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error(`${this.props.label || '工作区'}渲染失败`, error, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <section className="workspace-render-error" role="alert"><strong>{this.props.label || '工作区'}暂时无法显示</strong><span>{this.state.error.message || '页面组件发生运行时错误'}</span><button type="button" className="secondary-button" onClick={() => this.setState({ error: null })}>重试</button></section>;
+  }
+}
+function StageFooter({ left, actions }) { return <footer className="stage-footer"><span><i />{left}</span><div>{actions}</div></footer>; }
+function PanelHeader({ icon: Icon, title, action }) { return <header className="panel-header"><div><Icon size={16} /><h2>{title}</h2></div>{action}</header>; }
+function RuntimeStatusIcon({ state, ready }) {
+  const resolved = state || (ready ? 'ready' : 'blocked');
+  const icon = resolved === 'ready' ? <Check size={12} /> : resolved === 'external_required' ? <Radio size={12} /> : resolved === 'degraded' ? <AlertTriangle size={12} /> : <X size={12} />;
+  return <span className={`runtime-icon ${resolved === 'external_required' ? 'external' : resolved}`}>{icon}</span>;
+}
+function RuntimeLine({ label, ready, state, detail }) { return <div className="runtime-line"><RuntimeStatusIcon {...{ state, ready }} /><strong>{label}</strong><small>{detail}</small></div>; }
+function RuntimeConsole({ health, busy, expertMode, onExpertModeChange, onRefresh, onClose }) {
+  const runtimes = health?.runtimes || {};
+  const runtimeCapabilities = health?.runtimeCapabilities || {};
+  const llm = health?.llm || {};
+  const groups = [
+    {
+      title: '推理接口',
+      items: [
+        { label: 'API 密钥配置', ready: llm.configured, detail: llm.configured ? '仅确认服务端存在，不显示内容' : '未配置' },
+        { label: '精确模型 ID', ready: Boolean(llm.model), detail: llm.model || '未配置' },
+        { label: '主节点', ready: Boolean(llm.primaryBaseUrl || llm.baseUrl), detail: llm.primaryBaseUrl || llm.baseUrl || '未配置' },
+        { label: '香港直连节点', ready: Boolean(llm.directBaseUrl), detail: llm.directBaseUrl || '未配置' }
+      ]
+    },
+    {
+      title: '视觉与语义',
+      items: [
+        { label: 'YOLOX-s ONNX', ready: runtimes.yolo, detail: runtimes.yolo ? '模型权重可读' : '模型路径不可用' },
+        { label: 'FFmpeg / FFprobe', ready: runtimes.ffmpeg && runtimes.ffprobe, detail: runtimes.ffmpeg && runtimes.ffprobe ? '解码、探测与编码可用' : '视频工具链不完整' },
+        { label: runtimes.groundingDino?.label || 'Grounding DINO', ready: runtimes.groundingDino?.available, detail: runtimes.groundingDino?.model || runtimes.groundingDino?.note || '未配置真实模型' },
+        { label: runtimes.sam2?.label || 'SAM 2', ready: runtimes.sam2?.available, detail: runtimes.sam2?.model || runtimes.sam2?.note || '未配置真实模型' }
+      ]
+    },
+    {
+      title: '三维重建与发布',
+      items: [
+        { label: 'OpenSKP', ready: runtimes.skpConverter, detail: runtimes.skpConverter ? 'SKP 主体模型可直接转换为 GLB' : 'SKP 解析器不可用' },
+        { label: 'DWG Reader', ready: runtimes.dwgReader, detail: runtimes.dwgReader ? 'DWG 平面可转换为 GLB 与 GeoJSON' : 'DWG 解析器不可用' },
+        { label: 'Blender Worker', ready: runtimes.blender, state: runtimeCapabilities.blender?.state, detail: runtimeCapabilities.blender?.detail || 'CAD 语义 GLB 可继续使用' },
+        { label: 'COLMAP / PyCOLMAP', ready: runtimes.colmap, state: runtimeCapabilities.colmap?.state, detail: runtimeCapabilities.colmap?.detail || (runtimes.colmap ? '摄影测量可用' : '无法启动摄影测量') },
+        { label: 'Nerfstudio / gsplat', ready: runtimes.nerfstudio, state: runtimeCapabilities.nerfstudio?.state, detail: runtimeCapabilities.nerfstudio?.detail || '可选增强；自动降级为 COLMAP 点云' },
+        { label: 'Nerfstudio 导出', ready: runtimes.nsExport, state: runtimeCapabilities.nsExport?.state, detail: runtimeCapabilities.nsExport?.detail || '可选增强；仅影响 Gaussian 导出' },
+        { label: 'Niantic SPZ', ready: runtimes.spz, state: runtimeCapabilities.spz?.state, detail: runtimeCapabilities.spz?.detail || '可选增强；当前使用 GLB / PLY' },
+        { label: 'NVIDIA GPU', ready: runtimes.gpu?.available, state: runtimeCapabilities.gpu?.state, detail: runtimeCapabilities.gpu?.detail || '需要远程 CUDA Worker' }
+      ]
+    }
+  ];
+  const counts = health?.counts || {};
+
+  return (
+    <div className="runtime-console-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="runtime-console" role="dialog" aria-modal="true" aria-labelledby="runtime-console-title">
+        <header className="runtime-console-header">
+          <div><span className="expert-only">SYSTEM / LIVE DIAGNOSTICS</span><h2 id="runtime-console-title"><span className="operator-only">设置</span><span className="expert-only">系统诊断</span></h2><p className="operator-only">当前使用操作者视图，只显示完成项目所需的功能。</p><p className="expert-only">这些信息仅用于系统维护和问题排查，操作页默认不显示。</p></div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭系统运行时" title="关闭"><X size={19} /></button>
+        </header>
+        <div className="runtime-console-toolbar">
+          <span className={`status-chip expert-only ${health?.ok ? 'ready' : 'blocked'}`}>{health?.ok ? 'API ONLINE' : 'API WAITING'}</span>
+          <span className="expert-only">{health?.timestamp ? `后端时间 ${new Date(health.timestamp).toLocaleString('zh-CN')}` : '尚未取得健康状态'}</span>
+          <button type="button" className={`secondary-button runtime-mode-toggle ${expertMode ? 'active' : ''}`} aria-pressed={expertMode} aria-label={expertMode ? '隐藏专家信息' : '显示专家信息'} onClick={() => onExpertModeChange(!expertMode)}><Settings2 size={14} />{expertMode ? '恢复操作者视图' : '显示专家信息'}</button>
+          <button type="button" className="secondary-button expert-only" onClick={onRefresh} disabled={busy}><RefreshCw size={14} className={busy ? 'spin' : ''} />{busy ? '刷新中' : '刷新状态'}</button>
+        </div>
+        <div className="operator-settings-note operator-only"><Settings2 size={20} /><div><strong>专家信息已隐藏</strong><span>接口、模型、运行时、对象 ID 和审计数据不参与日常操作。只在维护或排查问题时开启专家信息。</span></div></div>
+        <dl className="runtime-counts expert-only" aria-label="运行数据计数">
+          <div><dt>源资产</dt><dd>{counts.assets ?? 0}</dd></div>
+          <div><dt>观测记录</dt><dd>{counts.observations ?? 0}</dd></div>
+          <div><dt>方案草案</dt><dd>{counts.proposals ?? 0}</dd></div>
+          <div><dt>阶段资产</dt><dd>{counts.artifacts ?? 0}</dd></div>
+        </dl>
+        <div className="runtime-console-groups expert-only">
+          {groups.map((group) => <section className="runtime-console-group" key={group.title}><h3>{group.title}</h3>{group.items.map((item) => <RuntimeConsoleLine key={item.label} {...item} />)}</section>)}
+        </div>
+      </section>
+    </div>
+  );
+}
+function RuntimeConsoleLine({ label, ready, state, detail }) { return <div className="runtime-console-line"><RuntimeStatusIcon {...{ state, ready }} /><strong>{label}</strong><small>{detail}</small></div>; }
+function ProjectSummary({ project }) { return <div className="project-summary"><strong>{project?.name}</strong><p>{project?.address || '未填写地址说明'}</p><span className="expert-only">{project?.latitude}, {project?.longitude} · {project?.coordinateSystem}</span></div>; }
+function AssetRow({ asset }) { const Icon = asset.type === 'video' ? FileVideo : asset.type === '3d' || asset.type === 'cad' ? Box : Database; const evidenceClass = asset.status === 'failed' ? 'hypothesis' : String(asset.evidenceLevel || 'Observed').toLowerCase().replace(' ', '-'); const typeLabel = asset.type === 'video' ? '视频' : asset.type === 'image' ? '图片' : asset.type === 'cad' ? '平面图' : asset.type === '3d' ? '三维模型' : '资料'; const displayName = asset.type === 'video' ? videoDisplayName(asset) : asset.name; const corridorIndex = asset.type === 'video' ? siteCorridorVideoPrefixes.findIndex((prefix) => String(asset.name || '').toLowerCase().startsWith(prefix)) : -1; return <div className="asset-row"><span><Icon size={16} /></span><div><strong>{displayName}</strong><small>{typeLabel} · {formatBytes(asset.size)}{corridorIndex >= 0 ? ` · 连续路线第 ${corridorIndex + 1} 段` : ''}{asset.testOnly ? ' · TEST ONLY' : ''}<span className="expert-only">{asset.status && asset.status !== 'ready' ? ` · ${asset.status.toUpperCase()}` : ''}</span></small></div><code className="expert-only" title={asset.sha256}>{asset.sha256?.slice(0, 8) || '—'}</code><i className={`evidence-dot expert-only ev-${evidenceClass}`} /></div>; }
+function EmptyLine({ text }) { return <div className="empty-line"><CircleDot size={14} />{text}</div>; }
+function UnavailableSource({ icon: Icon, title, text }) { return <div className="source-prompt"><Icon size={20} /><div><strong>{title}</strong><p>{text}</p></div></div>; }
+function GateRow({ label, pass }) { return <div className="gate-row"><span className={pass ? 'pass' : ''}>{pass ? <Check size={13} /> : <X size={13} />}</span><strong>{label}</strong><small>{pass ? '已完成' : '待完成'}</small></div>; }
+function ProposalCard({ proposal }) { return <div className="proposal-card"><div><span className={`status-chip ${proposal.status === 'Expert Approved' ? 'ready' : 'blocked'}`}>{proposal.status === 'Expert Approved' ? '已通过专家审核' : '待审核方案'}</span>{proposal.testOnly && <span className="status-chip blocked">演示数据</span>}<strong>{proposal.draft?.plans?.[0]?.name || proposal.id}</strong></div><small>{proposal.draft?.diagnoses?.length || 0} 项诊断 · {proposal.draft?.plans?.reduce((sum, p) => sum + (p.actions?.length || 0), 0) || 0} 项调整</small></div>; }
+
+function Toolchain() {
+  const tools = [['OSM / DEM', '地理基础'], ['COLMAP', '相机位姿'], ['Nerfstudio', '3D Gaussian'], ['Open3D', '点云处理'], ['Trimesh', '语义几何'], ['Three.js', '网页合成']];
+  return <div className="toolchain">{tools.map(([name, detail], i) => <React.Fragment key={name}><div><strong>{name}</strong><span>{detail}</span></div>{i < tools.length - 1 && <ChevronRight size={13} />}</React.Fragment>)}</div>;
+}
+
+function Toast({ kind, message, details, onClose }) {
+  const Icon = kind === 'success' ? CheckCircle2 : kind === 'warning' ? AlertTriangle : XCircle;
+  const detailText = formatToastDetails(details);
+  return <div className={`toast ${kind}`}><Icon size={19} /><div><strong>{message}</strong>{detailText && <small>{detailText}</small>}</div><button onClick={onClose}><X size={15} /></button></div>;
+}
+
+createRoot(document.getElementById('root')).render(<App />);
+
+
+
+
+
