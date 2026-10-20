@@ -1092,7 +1092,8 @@ await ensureG3Fb932MainEntryV3Artifact();
 
 function publicArtifact(artifact) {
   const { storedPath, ...safe } = artifact;
-  return { ...safe, url: `/api/artifacts/${artifact.id}/content` };
+  const hostedUrl = typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/') ? safe.url : null;
+  return { ...safe, url: hostedUrl || `/api/artifacts/${artifact.id}/content` };
 }
 
 // The store intentionally keeps every historical candidate for traceability,
@@ -2394,7 +2395,9 @@ function publicAsset(asset) {
     sourceNature,
     testOnly,
     evidenceLevel: testOnly ? 'Scenario' : (safe.evidenceLevel || 'Observed'),
-    url: `/api/assets/${asset.id}/content`
+    url: typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/')
+      ? safe.url
+      : `/api/assets/${asset.id}/content`
   };
 }
 
