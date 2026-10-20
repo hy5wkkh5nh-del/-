@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="空间再编排">
+  <rect width="64" height="64" rx="12" fill="#0b1013"/>
+  <path d="M15 12h8v40h-8zM28 8h8v40h-8zM41 14h8v38h-8z" fill="#54e1da"/>
+  <path d="M15 12h8v7h-8zM28 8h8v7h-8zM41 14h8v7h-8z" fill="#c7fffa" opacity=".8"/>
+</svg>
+
