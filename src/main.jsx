@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 135598)
-Total output lines: 6785
-
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@fontsource-variable/noto-sans-sc/wght.css';
@@ -1376,921 +1373,1148 @@ function AmapDeliveryTable() {
     return !term || row.some((cell) => String(cell ?? '').toLowerCase().includes(term));
   });
   useEffect(() => {
-    let canc…85598 tokens truncated… null };
-      setSelectedModelId(interiorWalkthroughAsset.id);
-      return;
-    }
-    if (requestedSpace) {
-      setSelectedFloorNumber(Number(requestedSpace.floorNumber));
-      setSelectedSpaceId(requestedSpace.id);
-    }
-    setNavigationMode('walkthrough');
-  };
-  const visitSpace = (space) => { if (space) enterWalkthrough(space); };
-  const stepSpace = (direction) => {
-    const currentIndex = selectedTourIndex >= 0 ? selectedTourIndex : 0;
-    const nextIndex = Math.max(0, Math.min(allTourSpaces.length - 1, currentIndex + direction));
-    visitSpace(allTourSpaces[nextIndex]);
-  };
-  const toggleExpanded = async () => {
-    const viewport = mountRef.current?.parentElement;
-    try {
-      if (!isExpanded && viewport?.requestFullscreen) {
-        await viewport.requestFullscreen();
-        setIsExpanded(true);
-      } else if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        setIsExpanded(false);
+    let cancelled = false;
+    setLoading(true);
+    setStatus('正在读取原始交付表…');
+    fetch(view.path).then((response) => { if (!response.ok) throw new Error(`读取失败 ${response.status}`); return response.text(); }).then((text) => {
+      if (cancelled) return;
+      const parsed = parseActivityCsv(text);
+      if (view.id === 'daily' || view.id === 'hourly') {
+        const mapped = parsed.rows.map((r) => r.map((cell, i) => (i === 0 ? amapDayLabel(cell) : cell)));
+        setTable({ headers: parsed.headers, rows: mapped });
+      } else if (view.id === 'roads') {
+        const cut = new Set(['小路9', '小路10', '小路11', '小路12', '小路13', '小路14']);
+        const kept = parsed.rows.filter((r) => !cut.has(String(r[0] || '').trim()));
+        const num = (v) => Number(String(v ?? '').replace(/,/g, '')) || 0;
+        const allIdx = kept.findIndex((r) => /全部/.test(String(r[0] || '')));
+        if (allIdx >= 0) {
+          const dataRows = kept.filter((r, i) => i !== allIdx && !/空/.test(String(r[0] || '')));
+          const sum = (idx) => dataRows.reduce((acc, r) => acc + num(r[idx]), 0);
+          const sample = sum(1), green = sum(2), slow = sum(3), jam = sum(4), ser = sum(5), none = sum(6), chg = sum(7);
+          const eff = sample - none;
+          const pct = (v) => (eff ? (100 * v / eff).toFixed(2) + '%' : '-');
+          kept[allIdx] = ['【全部·8路】', sample, green, slow, jam, ser, none, chg, pct(green), pct(slow), pct(jam), pct(ser)];
+        }
+        setTable({ headers: parsed.headers, rows: kept });
       } else {
-        setIsExpanded((current) => !current);
+        setTable(parsed);
       }
-    } catch {
-      setIsExpanded((current) => !current);
-    }
-  };
-  const copyCameraLink = async () => {
-    const snapshot = environmentRef.current?.getCameraSnapshot?.();
-    if (!snapshot || !modelAsset?.id) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('model', modelAsset.id);
-    url.searchParams.set('view', window.btoa(unescape(encodeURIComponent(JSON.stringify(snapshot)))));
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setShareStatus('视角链接已复制');
-    } catch {
-      setShareStatus('浏览器未授权复制，请复制地址栏');
-    }
-    window.setTimeout(() => setShareStatus(''), 2400);
-  };
-  const saveContextRegistration = async () => {
-    if (!project?.id || !modelAsset?.id || !contextAsset?.id) return;
-    setRegistrationMessage('正在保存配准参数');
-    try {
-      await api(`/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          modelRegistration: {
-            modelArtifactId: modelAsset.id,
-            contextArtifactId: contextAsset.id,
-            ...registrationState
-          }
-        })
-      });
-      setRegistrationMessage('配准参数已保存 · Hypothesis');
-    } catch (error) {
-      setRegistrationMessage(`保存失败：${error.message}`);
-    }
-  };
-  const evidenceInventory = modelAsset.metadata?.evidenceInventory;
-  const evidenceCounts = evidenceInventory?.counts || {};
-  const mainRouteVideoCount = Number(modelAsset.metadata?.sourceVideoOrder?.length || 7);
-  const returnRouteVideoCount = Number(modelAsset.metadata?.returnVideoOrder?.length || 0);
-  const routeVideoCount = mainRouteVideoCount + returnRouteVideoCount;
-  const allVideoCount = Number(modelAsset.metadata?.allProjectVideoAssetCount ?? evidenceCounts.allVideoAssetRecords ?? routeVideoCount);
-  const fieldVideoCount = Number(modelAsset.metadata?.fieldVideoAssetCount ?? evidenceCounts.fieldVideoAssetRecords ?? routeVideoCount);
-  const testVideoCount = Number(modelAsset.metadata?.testVideoAssetCount ?? evidenceCounts.testVideoAssetRecords ?? Math.max(0, allVideoCount - fieldVideoCount));
-  const unmappedVideoCount = Number(modelAsset.metadata?.unmappedFieldVideoAssetCount ?? evidenceCounts.unmappedFieldVideoRecords ?? Math.max(0, fieldVideoCount - routeVideoCount));
-  const assignedSupplementalVideoCount = Number(evidenceCounts.assignedSupplementalFieldVideoRecords ?? Math.max(0, fieldVideoCount - routeVideoCount - unmappedVideoCount));
-  const ordinaryPhotoCount = Number(modelAsset.metadata?.ordinaryPhotoEvidenceCount ?? evidenceCounts.ordinaryPhotoRecords ?? modelAsset.metadata?.ordinaryPhotoEvidence ?? 0);
-  const panoramaCount = Number(modelAsset.metadata?.panoramaEvidenceCount ?? evidenceCounts.panoramaRecords ?? modelAsset.metadata?.panoramaEvidence ?? 0);
-  const fieldImageCount = Number(modelAsset.metadata?.fieldImageEvidenceCount ?? evidenceCounts.allImageAssetRecords ?? ordinaryPhotoCount + panoramaCount);
-  const evidenceSummary = evidenceInventory || modelAsset.metadata?.allProjectVideoAssetCount != null
-    ? `${fieldVideoCount}段现场视频（${mainRouteVideoCount}段主路线 + ${returnRouteVideoCount}段回程${assignedSupplementalVideoCount ? ` + ${assignedSupplementalVideoCount}段固定机位/连续性证据` : ''}${unmappedVideoCount ? ` + ${unmappedVideoCount}段补充未用于路线几何` : ''}）${testVideoCount ? `；${testVideoCount}段测试视频不参与现场成果` : ''} · ${fieldImageCount}张现场图片（${ordinaryPhotoCount}张普通照片 + ${panoramaCount}张全景）`
-    : `${routeVideoCount}段路线视频 · ${fieldImageCount || 0}张已登记现场图片`;
-  const navigationDimensionEvidence = modelAsset.metadata?.navigationDimensionEvidence
-    || modelAsset.metadata?.navigationTopologyBaseline?.evidence?.find((item) => item?.fileName === 'amap-site-boundary-20261005.png')
-    || null;
-  const navigationTopologyFirst = modelAsset.metadata?.topologyFirst === true;
-  const modelFidelity = modelAsset.kind === 'site_context_glb'
-     ? { title: modelAsset.metadata?.blenderRefined ? 'Blender 精修连续视频周边小道' : '连续视频周边小道', detail: `${evidenceSummary} · ${Math.round(modelAsset.metadata?.routeLengthM || 0)}m 连续路线 · ${Object.keys(modelAsset.metadata?.currentStateDetailCounts || modelAsset.metadata?.detailCounts || {}).length || 0} 类现状周边细节 · 现场视频帧材质证据；主楼显示为基于 CAD 首层轮廓的外景外壳，原始 SKP/CAD 室内墙、柱、门窗与材料保存在独立室内模型图层${modelAsset.metadata?.blenderRefined ? `；Blender ${modelAsset.metadata?.blenderVersion || ''} 对 ${modelAsset.metadata?.blenderRefinement?.bevelAppliedCount || 0} 个构件设置可编辑倒角，并精修 ${modelAsset.metadata?.blenderRefinement?.tunedMaterialCount || 0} 类 PBR 材质` : ''}。现状展示默认隐藏施工围挡、塔吊和临时框架，历史施工证据仍可在专家模式回看；设施只出现在对应视频区间，未拍连接、程序化微纹理、设施尺寸、材质精修和绝对线位为 Hypothesis；场景不放置方向箭头或代表车辆。`, coordinate: '本地 ENU 米制近似配准，已绑定项目锚点，但不是测绘级成果' }
-     : modelAsset.kind === 'site_interior_model_glb'
-       ? { title: '主建筑独立室内 CAD/BIM', detail: `${modelAsset.metadata?.levelCount ?? 1} 个楼层 · 源 SKP/CAD 几何与材料保留在独立室内资产；不会混入周边外景 GLB。`, coordinate: '相对米制，需与周边场景单独配准后叠加' }
-     : modelAsset.kind === 'skp_glb'
-    ? { title: 'SKP 主体模型', detail: '门窗、砖瓦与贴图仅来自原始 SKP；系统不会补造未建模细节。', coordinate: modelAsset.metadata?.georeferenced ? '已与项目地理锚点配准' : '相对米制，未与 OSM 地理底景配准' }
-    : modelAsset.kind === 'blender_enhanced_glb'
-      ? { title: 'Blender PBR 增强模型', detail: `${modelAsset.metadata?.levelCount ?? 1} 个独立楼层 · 几何沿用 ${modelAsset.metadata?.schema || 'CAD 室内模型'}；程序纹理、PBR参数、灯光与预览相机为 Hypothesis，不代表现场实测材质。`, coordinate: project?.modelRegistration?.modelArtifactId === modelAsset.id ? '已保存与 OSM 的人工配准参数，证据等级为 Hypothesis' : '继承相对米制坐标，需保存配准参数后才能与 OSM 同场叠加' }
-    : modelAsset.kind === 'dwg_extrusion_glb'
-      ? /^dwg_interior_model\.v[234]$/.test(modelAsset.metadata?.schema || '')
-        ? { title: modelAsset.metadata?.schema === 'dwg_interior_model.v4' ? 'CAD 室内语义 v4' : modelAsset.metadata?.schema === 'dwg_interior_model.v3' ? 'CAD 室内三维 v3' : 'CAD 室内三维 v2', detail: `${modelAsset.metadata?.levelCount ?? 1} 个独立楼层 · ${modelAsset.metadata?.sourceSurfaceCount ?? 0} 个面状墙体/柱体依据 · ${modelAsset.metadata?.openingCounts?.door ?? 0} 门 / ${modelAsset.metadata?.openingCounts?.window ?? 0} 窗 · ${modelAsset.metadata?.resolvedOpeningCounts?.window ?? modelAsset.metadata?.wallOpeningCutCount ?? 0} 个窗洞已与墙体对齐 · ${modelAsset.metadata?.windowFrameCount ?? 0} 组窗框 · ${modelAsset.metadata?.selectedFurnitureCount ?? 0} 件简化家具 · ${modelAsset.metadata?.selectedSemanticObjectCount ?? 0} 个停车/景观/洁具/消防/机电语义对象 · ${modelAsset.metadata?.railingCount ?? modelAsset.metadata?.categoryCounts?.railing ?? 0} 组护栏/栏杆 · ${modelAsset.metadata?.handrailCount ?? modelAsset.metadata?.categoryCounts?.handrail ?? 0} 段扶手；平面几何为 Derived，垂直尺寸与细部参数为 Hypothesis。`, coordinate: project?.modelRegistration?.modelArtifactId === modelAsset.id ? '已保存与 OSM 的人工配准参数，证据等级为 Hypothesis' : '相对米制，需保存配准参数后才能与 OSM 同场叠加' }
-        : { title: modelAsset.metadata?.schema === 'dwg_interior_model.v1' ? 'CAD 室内三维 · 旧版' : 'DWG 参数化补模', detail: modelAsset.metadata?.schema === 'dwg_interior_model.v1' ? `${modelAsset.metadata?.outputSegmentCount ?? 0} 条结构线 · ${modelAsset.metadata?.openingCounts?.door ?? 0} 门 / ${modelAsset.metadata?.openingCounts?.window ?? 0} 窗 · ${modelAsset.metadata?.floorSlabCount ?? 0} 块楼板；该版本为单平面拉伸资产。` : `${modelAsset.metadata?.outputSegmentCount ?? 0} 条 DWG 结构线已拉伸；该旧资产未包含完整门窗和楼板。`, coordinate: '相对米制，需控制点或变换矩阵后才能与 SKP / OSM 同场叠加' }
-    : modelAsset.kind === 'osm_context_glb'
-      ? { title: 'OSM 周边体量与道路', detail: `${modelAsset.metadata?.counts?.buildings ?? 0} 栋建筑 · ${modelAsset.metadata?.counts?.roads ?? 0} 条道路；材质为概念显示，不含立面门窗。`, coordinate: 'WGS84 → 本地 ENU，已绑定项目地理锚点' }
-      : modelAsset.kind === 'dwg_plan_glb'
-        ? { title: 'DWG 平面校核', detail: '仅显示可解析线段，不包含立面、门窗或贴图材质。', coordinate: modelAsset.metadata?.georeferenced ? '已地理配准' : '米制源坐标，未与 OSM 配准' }
-        : modelType === 'ply'
-          ? { title: '点云实景层', detail: '颜色来自点云顶点；点密度决定可见细节。', coordinate: '坐标状态以源资产记录为准' }
-          : { title: '导入 GLB / GLTF', detail: '几何、门窗与材质均来自上传文件。', coordinate: modelAsset.metadata?.georeferenced ? '已地理配准' : '坐标状态未声明，暂不能保证与 OSM 同场对齐' };
-  const supplementalReferenceConflicts = Array.isArray(modelAsset?.metadata?.supplementalReferenceConflicts)
-    ? modelAsset.metadata.supplementalReferenceConflicts
-    : [];
-  const openReferenceConflictCount = supplementalReferenceConflicts.filter((item) => ![
-    'resolved_by_visibility_policy',
-    'resolved_by_reference_correction',
-    'operator_approved_approximate',
-    'reference_only'
-  ].includes(item?.status)).length;
-  const handleCompetitionPresentation = async () => {
-    if (loadState.status !== 'ready') return;
-    const runtime = environmentRef.current;
-    if (!runtime?.model) return;
-    try {
-      if (!digitalDerivative) {
-        const result = await runtime.setDigitalDerivative?.(true);
-        if (result?.active !== true) return;
-        setDigitalDerivative(true);
-      }
-      setCompetitionPresentation(true);
-      setTwinMode(true);
-      runtime.setTwinMode?.(true);
-      setDisplayMode('day-night');
-      setHeatmapPlan('P-BALANCED');
-      setAgentSlot('weekday_arrival');
-      setAgentCount(260);
-      setFluidMode(false);
-      runtime.fitView?.();
-    } catch (error) {
-      console.error('比赛演示模式启动失败', error);
-    }
-  };
-  const exitCompetitionPresentation = async () => {
-    const runtime = environmentRef.current;
-    try {
-      if (digitalDerivative) {
-        const result = await runtime?.setDigitalDerivative?.(false);
-        if (result?.active === false) setDigitalDerivative(false);
-      }
-    } catch (error) {
-      console.error('比赛演示模式退出失败', error);
-    }
-    setCompetitionPresentation(false);
-    setTwinMode(false);
-    runtime?.setTwinMode?.(false);
-    setDisplayMode('original');
-    setHeatmapPlan('P-SAFE');
-    setAgentCount(300);
-    setFluidMode(false);
-  };
-  const selectedSurfaceEditor = surfaceEditorObjects.find((item) => item.id === surfaceEditorId) || surfaceEditorObjects[0] || null;
-  const selectSurfaceEditorObject = (id) => {
-    setSurfaceEditorId(id);
-    const selection = environmentRef.current?.selectEditableObject?.(id);
-    if (selection) setDirectSurfaceSelection(selection);
-  };
-  const updateSurfaceEditor = (key, value) => {
-    if (!selectedSurfaceEditor) return;
-    const next = environmentRef.current?.setBWalkEditorObject?.(selectedSurfaceEditor.id, { [key]: Number(value) }) || [];
-    setSurfaceEditorObjects(next);
-    setSurfaceEditorMessage(`${selectedSurfaceEditor.label} · ${key === 'length' ? '长度' : key === 'width' ? '宽度' : key === 'offsetX' ? 'X偏移' : 'Z偏移'}已更新`);
-  };
-  const resetSurfaceEditor = () => {
-    if (!selectedSurfaceEditor) return;
-    const next = environmentRef.current?.resetBWalkEditorObject?.(selectedSurfaceEditor.id) || [];
-    setSurfaceEditorObjects(next);
-    setSurfaceEditorMessage(`${selectedSurfaceEditor.label} · 已恢复初始尺寸和位置`);
-  };
-  const captureSurfaceFormat = () => {
-    const result = environmentRef.current?.captureBWalkFormat?.(surfaceFormatSourceId);
-    const source = surfaceEditorObjects.find((item) => item.id === surfaceFormatSourceId);
-    setSurfaceEditorMessage(result ? `已吸取「${source?.label || '源对象'}」格式，选择目标后点击应用` : '源对象暂不可用');
-  };
-  const applySurfaceFormat = () => {
-    const result = environmentRef.current?.applyBWalkFormat?.(surfaceFormatTargetId);
-    const target = surfaceEditorObjects.find((item) => item.id === surfaceFormatTargetId);
-    setSurfaceEditorMessage(result ? `已将格式刷应用到「${target?.label || '目标对象'}」` : '请先吸取格式');
-    if (result) setSurfaceEditorObjects(environmentRef.current?.getBWalkEditorObjects?.() || []);
-  };
-  const captureDirectFormat = () => {
-    const result = environmentRef.current?.captureEditableFormat?.();
-    setDirectFormatBrushArmed(Boolean(result));
-    setSurfaceEditorMessage(result ? `已吸取「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」格式，请点击目标对象` : '请先在场景中点击一个可编辑对象');
-  };
-  const applyDirectFormat = () => {
-    const result = environmentRef.current?.applyEditableFormat?.();
-    if (result) setDirectFormatBrushArmed(false);
-    setSurfaceEditorMessage(result ? `已把格式刷应用到「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」` : '请先吸取格式，再选中目标对象');
-  };
-  const copyDirectSelection = () => {
-    const result = environmentRef.current?.copyEditableObject?.();
-    setSurfaceEditorMessage(result ? `已复制「${result.label}」，点击粘贴会在旁边生成副本` : '请先在场景中点击一个可编辑对象');
-  };
-  const pasteDirectSelection = () => {
-    const result = environmentRef.current?.pasteEditableObject?.();
-    setSurfaceEditorMessage(result ? `已粘贴「${result.label}」副本` : '请先复制一个可编辑对象');
-  };
-  const deleteDirectSelection = () => {
-    const result = environmentRef.current?.deleteEditableObject?.();
-    setSurfaceEditorMessage(result ? `已删除「${result.name}」，可点击撤销删除` : '主大楼或未选对象不能删除');
-  };
-  const undoDirectSelectionDelete = () => {
-    const result = environmentRef.current?.undoEditableDelete?.();
-    setSurfaceEditorMessage(result ? `已恢复「${result.label || result.name}」` : '当前没有可撤销的删除');
-  };
-  const clipDirectSelection = () => {
-    const result = environmentRef.current?.clipEditableObject?.({ axis: surfaceClipAxis, keepSide: surfaceClipKeepSide, fraction: Number(surfaceClipFraction) });
-    setSurfaceEditorMessage(result ? `已裁剪「${directSurfaceSelection?.label || directSurfaceSelection?.name || '对象'}」的一侧，可撤回` : '请先在场景中点击一个可编辑对象');
-  };
-  const undoDirectSelectionClip = () => {
-    const result = environmentRef.current?.undoEditableClip?.();
-    setSurfaceEditorMessage(result ? `已撤回「${result.target}」的区域裁剪` : '当前没有可撤回的区域裁剪');
-  };
-  return <><div className="metro-view-toolbar" style={{ position: 'static', padding: '6px 10px', background: '#07131c' }}>
-    <select aria-label="地铁口视角预设" defaultValue="" disabled={loadState.status !== 'ready'} onChange={(event) => {
-      const presets = [ [[-70,70,-130],[-83,0,-104]], [[-50,30,-135],[-83,2,-104]], [[150,130,160],[-30,0,-50]], [[-20,100,80],[-69,0,40]], [[-45,25,10],[-69,2,40]], [[150,130,160],[-30,0,20]] ];
-      const runtime = environmentRef.current;
-      const preset = presets[Number(event.target.value)];
-      if (event.target.value !== '' && runtime?.model && preset) {
-        runtime.camera.position.fromArray(preset[0]).add(runtime.model.position);
-        runtime.controls.target.fromArray(preset[1]).add(runtime.model.position);
-        runtime.controls.update();
-      }
-      event.target.value = '';
-    }}><option value="">地铁口视角 ▾</option>{['2号口俯视','2号口人视','2号口接驳全景','4号口俯视','4号口人视','4号口接驳全景'].map((label, index) => <option key={label} value={index}>{label}</option>)}</select>
-  </div><div className={`three-mount-wrap ${isExpanded ? 'expanded' : ''} ${navigationMode === 'walkthrough' ? 'walkthrough' : ''} ${navigationMode === 'route-tour' ? 'route-tour' : ''} ${competitionPresentation ? 'competition-presentation' : ''}`} data-navigation-mode={navigationMode}>
-    <div className="three-mount" ref={mountRef} aria-label={`三维模型预览：${modelName}`} />
-    <div className="coordinate-probe" aria-live="polite">
-      <div><strong>当前层坐标</strong><span>{pointerCoordinate ? `X ${pointerCoordinate.x.toFixed(3)} · Y ${pointerCoordinate.y.toFixed(3)} · Z ${pointerCoordinate.z.toFixed(3)}` : '移动鼠标到场地表面'}</span></div>
-      <button type="button" disabled={!pointerCoordinate} onClick={() => pointerCoordinate && setCoordinateRows((rows) => [...rows, { id: `${modelAsset.id}-${rows.length + 1}`, layer: layerLabel(modelAsset), x: pointerCoordinate.x, y: pointerCoordinate.y, z: pointerCoordinate.z, object: '待指定', source: 'operator_point' }])}>记录点</button>
-      <details><summary>面层点位表（{coordinateRows.length}）</summary><table><thead><tr><th>#</th><th>对象</th><th>X</th><th>Y</th><th>Z</th></tr></thead><tbody>{coordinateRows.map((row, index) => <tr key={row.id}><td>{index + 1}</td><td>{row.object}</td><td>{row.x.toFixed(3)}</td><td>{row.y.toFixed(3)}</td><td>{row.z.toFixed(3)}</td></tr>)}</tbody></table>{coordinateRows.length > 0 && <button type="button" onClick={() => setCoordinateRows([])}>清空表格</button>}</details>
+      setLoading(false);
+      setStatus(`${view.label} · 原文件内容 · 最多显示前 500 行，表格可横向/纵向拖动`);
+    }).catch((error) => { if (!cancelled) { setTable({ headers: [], rows: [] }); setLoading(false); setStatus(`${view.label} 读取失败：${error.message}`); } });
+    return () => { cancelled = true; };
+  }, [view.path, view.label]);
+  return <div className="amap-delivery-table-block">
+    <div className="activity-evidence-toolbar"><div><strong>高德路况监测 · 完整交付</strong><small>{status} · 当前显示 {visibleRows.length} / {Math.min(table.rows.length, 500)} 行</small></div><div className="amap-table-tools"><input aria-label="筛选高德交付表" placeholder="筛选路径、时间或 SHA256" value={search} onChange={(event) => setSearch(event.target.value)} /><select aria-label="选择高德交付表" value={viewId} onChange={(event) => { setViewId(event.target.value); setSearch(''); }}>{amapDeliveryViews.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></div></div>
+    <div className="activity-table-scroll amap-delivery-scroll" role="region" aria-label="高德路况原始交付表格" tabIndex="0"><table><thead><tr>{table.headers.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}</tr></thead><tbody>{visibleRows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{String(cell ?? '')}</td>)}</tr>)}</tbody></table>{!table.rows.length && <div className="activity-table-empty" role="status">{loading ? '正在读取原始交付表…' : '暂无表格行'}</div>}{table.rows.length > 0 && !visibleRows.length && <div className="activity-table-empty" role="status">没有匹配的交付记录</div>}</div>
+    <div className="activity-table-analysis amap-delivery-analysis"><span>TABLE ANALYSIS · DERIVED FROM ORIGINAL DELIVERY</span><strong>总体畅通，拥挤集中在工作日早高峰与少数点位</strong><div className="amap-analysis-details"><p>监测对象是高德地图路况图层在小路采样点显示的颜色状态，不是车辆数、行人数或道路容量。交付包共记录 1,365,201 条样本（14 路），按约 5 秒交错采样；小路9～14 距主楼较远，经操作者确认剔除，以下结论与上方表格均为小路1～8 口径（原始 14 路全量数据见交付文件）。监测窗口取国庆假期前后各 3 天——节前 3 个工作日（周一至周三）与假期 3 天，共 6 天、666,632 条有效样本，构成「工作日 vs 假期」对照；下文以「节前·工作日1/2/3」「假期·第1/2/3天」指代各监测日。分析时剔除“无路况颜色”，只比较有效路况颜色的相邻变化。</p><ul><li><b>总体（8 路 · 6 天）：</b>畅通 99.96%，缓行 0.02%，拥堵 0.01%，无严重拥堵记录；有效颜色序列共出现 52 次真实状态变化。</li><li><b>拥挤与通勤强绑定：</b>节前 3 个工作日贡献了 52 次变化中的 49 次（94%）；进入国庆假期后骤降，假期第 2、3 天全天零变化——周边小路的拥挤完全由通勤节奏驱动，假期即消失。</li><li><b>拥挤集中点：</b>缓行以小路8 最突出（94 次，全部落在节前·工作日2 早高峰 07 时的 48 次与节前·工作日3 傍晚 16 时的 46 次，是典型早晚高峰潮汐）；拥堵集中在小路1（21 次）、小路5（20 次）、小路4（19 次）、小路2（12 次）；状态变化最活跃的是小路4 与小路7（各 12 次）。</li><li><b>刚性拥挤点：</b>小路2 连国庆假期第 1 天的早高峰 07 时仍出现 24 次拥堵记录，节前·工作日2 午间 12 时另有 26 次缓行——假期首日都绕不开的点位，属于稳定拥挤点；小路3、小路6 在 6 天有效样本中始终显示畅通。其余路段高峰也基本保持畅通，但不能据此断言没有行人或非机动车。</li><li><b>时段：</b>早高峰 07 时是全期拥挤之最（8 路合计 72 次非畅通），其次为傍晚 16 时（46 次）、上午 09 时（36 次）与 17～18 时（各 29 次）。</li><li><b>重点日（8 路合计非畅通）：</b>节前·工作日1 最高 94 次——早高峰 09 时 36 次全部来自小路1，晚高峰 17～18 时各 29 次则由小路4、小路5、小路7 分担（各 9~11 次），全天变化 37 次也居首；节前·工作日2 次之 74 次，集中在早高峰 07 时（48 次，小路8）与午间 12 时（26 次，小路2）；节前·工作日3 的 46 次全部落在傍晚 16 时且全部来自小路8；假期第 1 天仅剩 24 次（07 时，小路2）；假期第 2、3 天全程畅通。</li></ul><p className="amap-analysis-boundary">解释边界：这些数字用于比较不同采样点和时段的高德路况状态，不能把各路相加成一条“总人流”，也不能把高德颜色直接换算成现场人数。</p></div></div>
+    <div className="amap-road-duo">
+      <AmapRoadMarkerMap />
+      <div className="amap-road-index"><div className="activity-evidence-toolbar"><div><strong>小路1～小路8 · 采样标记索引</strong><small>底图坐标对应左图（595×421）；原始坐标为 1440×900 监测截图像素位置，取色半径 5px</small></div></div><div className="activity-table-scroll amap-road-index-scroll" role="region" aria-label="小路一到八采样标记"><table><thead><tr><th>编号</th><th>交付包标记</th><th>底图 X</th><th>底图 Y</th><th>原始 X</th><th>原始 Y</th><th>取色半径</th><th>对应说明</th></tr></thead><tbody>{amapRoadIndex.map(([label, x, y]) => { const np = amapRoadNewPx[label]; return <tr key={label}><td>{label.replace('小路', '')}</td><td>{label}</td><td>{np[0]}</td><td>{np[1]}</td><td>{x}</td><td>{y}</td><td>5 px</td><td>高德路况颜色采样点</td></tr>; })}</tbody></table></div><small className="amap-road-index-note">注意：底图坐标用于采样点位图定位；原始坐标保留交付包溯源（1440×900 监测截图）。交付包没有“内部编号→真实街道名”的正式对应表，不能把小路1～8直接等同于现场红框小道1～3。</small></div>
     </div>
-    {/* B-WALK-01 photo evidence remains in the evidence archive; its viewport panel is hidden during cleanup. */}
-    {twinMode && <div className="twin-hud" aria-label="孪生模式状态面板">
-      <div className="twin-hud-title"><span className="twin-hud-dot" />SPATIAL TWIN <b>ONLINE</b></div>
-      <div className="smart-city-kicker"><span>SMART CITY DERIVATIVE</span><em>L3 CITY OPS · DERIVED LAYER</em></div>
-      <div className="twin-hud-grid"><span>小路拥挤度</span><strong>{congestionLabel(renderedAgentCount)}</strong><small>小路 agents · Simulated</small><span>方案</span><strong>{heatmapPlan}</strong><small>route heatmap</small><span>FPS</span><strong>{fps == null ? '--' : fps}</strong><small>{fluidMode ? 'fluid mode' : 'live'}</small></div>
-      <div className="twin-hud-badges"><em>Simulated</em><i>Scenario</i><span>ACES · Bloom</span></div>
-      <div className="derivative-state-compare" aria-label="改造前后状态对比">
-        <div className="derivative-state before"><span>01 · 现状场景</span><strong>OBSTRUCTION</strong><small>围栏阻断 · 入口绕行 · 混行压力</small></div>
-        <i aria-hidden="true">→</i>
-        <div className="derivative-state after"><span>02 · {heatmapPlan} 改造后</span><strong>{heatmapPlan === 'P-EFFICIENCY' ? 'FLOW SPLIT' : 'FLOW RELEASE'}</strong><small>{heatmapPlan === 'P-EFFICIENCY' ? '双开口分流 · 门禁复杂度上升' : '地面小门 · 直达分流 · 小路热力'}</small></div>
-      </div>
-      <div className="derivative-engine-panel">
-        <div className="derivative-engine-head"><span>DERIVATIVE ENGINE · L3</span><b>OBSERVE → TEST → DECIDE</b></div>
-        <div className="derivative-pipeline"><span>现场锚点</span><i>→</i><span>流量信号</span><i>→</i><span>改造方案</span><i>→</i><span>复算验证</span></div>
-        <div className="derivative-compare-strip"><span>现状</span><b>西门 {transportPlan?.lastSimulation?.roadResults?.find((item) => item.roadId === 'west-gate-walkway')?.flow?.pedestrians ?? 132}</b><small>人/时</small><b>南侧 {transportPlan?.lastSimulation?.roadResults?.find((item) => item.roadId === 'south-service-lane')?.flow?.pedestrians ?? 86}</b><small>人/时</small><i>→</i><span>{heatmapPlan} 改造后</span><b>{heatmapPlan === 'P-EFFICIENCY' ? '开口分流' : '小门 +60'}</b><small>{heatmapPlan === 'P-EFFICIENCY' ? '待现场分配' : '人/时'}</small></div>
-        <small className="derivative-engine-note">24H 轨道是全天情景强度时间轴；不是逐人运动轨迹。数字为 Scenario，需现场穿越计数校准。</small>
-      </div>
-      <div className="pain-narrative-panel"><strong>三处改建痛点 · {heatmapPlan}</strong><div className="pain-point-buttons">{['① 西门人行小道','② 南侧混行线','③ 栅栏小门'].map((label, index) => <button type="button" key={label} onClick={() => environmentRef.current?.focusPainPoint?.(index)}>{label}<small>{twinMode ? '解法路径' : '现状警示'}</small></button>)}</div>{painMetrics?.plans && Object.values(painMetrics.plans).some((metric) => Number(metric.currentM) > 0) ? <div className="pain-metric-list">{Object.entries(painMetrics.plans).map(([id, metric]) => <div key={id}><span>{id}</span><b>南侧小路：{metric.currentM}m → {metric.planM}m</b><small>省 {metric.savingPercent}% · Simulated</small></div>)}</div> : <div className="pain-metric-empty">路线长度未实测 · 只显示小路状态与方案关系，不把估算距离冒充现场测量。</div>}</div>
-    </div>}
-    {competitionPresentation && <aside className="competition-presentation-legend" aria-label="比赛演示空间关系说明">
-      <div className="competition-presentation-heading"><span>COMPETITION PRESENTATION</span><strong>空间关系在线</strong></div>
-      <div className="competition-presentation-status">Derived scene · Simulated flow</div>
-      <div className="competition-relation-list">
-        <div><strong>主楼外壳</strong><span>↔ 侧小道 / 栅栏 · Derived</span></div>
-        <div><strong>2号口 · 4号口</strong><span>↔ 主楼接驳路线 · Observed anchor</span></div>
-        <div><strong>三处痛点</strong><span>↔ P-BALANCED 解法路径 · Scenario</span></div>
-        <div><strong>小路人流与热力</strong><span>西门小道 / 南侧混行线 · Simulated</span></div>
-      </div>
-      <small>本模式只改变呈现层；真实模型、照片证据和来源台账仍可退出后查看。</small>
-    </aside>}
-    {modelAsset?.id === 'asset_10602c89c51e' && <div className="asset-layer-watermark" style={{ position: 'absolute', left: 16, bottom: 16, zIndex: 45, padding: '7px 12px', color: '#fff8ef', background: 'rgba(8,18,22,.86)', border: '1px solid #ff9f68', font: '600 12px/1.2 sans-serif', pointerEvents: 'none' }}>当前图层：新标注图 · 三栋外围建筑与小道</div>}
-    {modelAsset?.kind === 'site_context_glb' && sitePreviewArtifact?.url && <div className={`three-mount-poster ${['preview', 'ready'].includes(loadState.status) ? 'ready' : ''}`} aria-hidden={['preview', 'ready'].includes(loadState.status)}>
-      <img src={sitePreviewArtifact.url} alt="当前三维场景快速预览" decoding="async" fetchPriority="high" />
-      <div className="three-mount-poster-copy"><strong>场景预览已就绪</strong><span>高清三维模型正在后台解码，完成后自动切换。</span></div>
-    </div>}
-    {loadState.status === 'preview' && <div className="viewport-preview-status" role="status"><strong>快速三维</strong><span>{loadState.message}</span></div>}
-    <div className="viewport-mode-bar" role="status" aria-live="polite">
-      <div className="viewport-mode-copy">
-        <span className="viewport-mode-kicker">当前操作</span>
-        <strong>{activeNavigationMode.label}</strong>
-        <span>{activeNavigationMode.detail}</span>
-      </div>
-      <button type="button" className={`viewport-help-trigger ${showInteractionHelp ? 'active' : ''}`} aria-expanded={showInteractionHelp} onClick={() => setShowInteractionHelp((current) => !current)}>
-        <CircleHelp size={14} />操作说明
-      </button>
-    </div>
-    {showInteractionHelp && <div className="viewport-help-panel" role="note">
-      <strong>{activeNavigationMode.label} · 怎么操作</strong>
-      <span>{activeNavigationMode.hint}</span>
-      <small>显示模式和模型图层只改变呈现方式，不会修改原始三维资产。</small>
-    </div>}
-    {visualAssets.length > 1 && <details className="model-layer-picker" open>
-      <summary><span>三维图层</span><strong>{Math.max(1, visualAssets.findIndex((asset) => asset.id === modelAsset.id) + 1)} / {visualAssets.length}</strong></summary>
-      <div className="model-layer-switch" role="group" aria-label="三维资产图层" aria-busy={loadState.status === 'loading'}>{visualAssets.map((asset) => { const isRegisteredActive = asset.id === project?.modelRegistration?.siteContextArtifactId; return <button type="button" key={asset.id} disabled={loadState.status === 'loading'} className={`${asset.id === modelAsset.id ? 'active' : ''} ${directImageCandidateModelKinds.has(asset.kind) ? 'candidate-layer' : ''} ${isRegisteredActive ? 'registered-active-layer' : ''}`} aria-pressed={asset.id === modelAsset.id} onClick={() => { explicitModelSelectionRef.current = true; setSelectedModelId(asset.id); }}>{layerLabel(asset)}{isRegisteredActive ? ' · 当前主场景' : ''}</button>; })}</div>
-      <div className="model-layer-merge-probe" style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-        <button type="button" onClick={() => window.__sfLayerMerge?.toggle()}>图层合并预览 {window.__sfLayerMerge?.count?.() ?? 0} 层已合并</button>
-        <button type="button" onClick={() => window.__sfLayerMerge?.clear()}>清空</button>
-      </div>
-    </details>}
-    {modelAsset?.kind === 'site_map_layout_candidate_glb' && <details key={modelAsset.id} className="direct-image-candidate-banner candidate-view-controls">
-      <summary>视角与素材</summary>
-      <div className="candidate-view-controls-body">
-      <strong>{detailOrientationCandidate ? '③立面细节朝向修正' : orientationCorrectionCandidate ? '③建筑朝向修正' : entryCorrectionCandidate ? '入口围栏与③砖楼' : fullCaptureCandidate ? '全场地细化 · 材质与路线' : evidenceCompletionCandidate ? '场地补全 · ②侧边与小道设施' : '新标注图 · 三栋外围建筑与蓝线小道'}</strong>
-      <span>{detailOrientationCandidate ? '保持③主体和导航占地不变，只将生成的砖墙表面、窗列、外挑百叶箱和弧形雨棚转到正确立面；主楼、道路和人行门未改。' : orientationCorrectionCandidate ? '按用户现场照片将③正面、背面整体旋转180°，中心和导航占地不变；主大楼、道路及人行门未改。' : entryCorrectionCandidate ? '补充③砖墙、窗列与百叶箱，修正灰色围栏、人行折返栏杆、岗亭和车行设备；主大楼未改。高度和局部落点按照片比例估计，待你核对。' : fullCaptureCandidate ? '112份采景素材已按连续区域补充：③两面立面、南侧道路停车、东侧连续路线和夹道构造；尺寸仍以照片与导航相对比例为准。' : evidenceCompletionCandidate ? '②仅补夹道侧立面，高度估算；①③仍为体块。小道设施落点近似，主楼旧窗列待修。' : '占地按图对齐；外围建筑暂高12米，主楼立面保留待修。绿色线不参与建模。'}</span>
-      {['查看整体', '俯视核对位置'].map((label, index) => <button key={label} type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
-        const runtime = environmentRef.current;
-        if (!runtime?.model) return;
-        const bounds = new runtime.THREE.Box3().setFromObject(runtime.model);
-        const target = bounds.getCenter(new runtime.THREE.Vector3());
-        const radius = bounds.getBoundingSphere(new runtime.THREE.Sphere()).radius;
-        const vertical = runtime.THREE.MathUtils.degToRad(runtime.camera.fov);
-        const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * runtime.camera.aspect);
-        const distance = radius / Math.sin(Math.min(vertical, horizontal) / 2) * 1.08;
-        runtime.camera.position.copy(target).add(index ? new runtime.THREE.Vector3(0, distance, .001) : new runtime.THREE.Vector3(-distance * .35, distance * .75, distance * .5));
-        runtime.controls.target.copy(target);
-        runtime.controls.update();
-      }}>{label}</button>)}
-      {evidenceCompletionCandidate && <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
-        const runtime = environmentRef.current;
-        if (!runtime?.model) return;
-        runtime.camera.position.set(-72, 20, -123).add(runtime.model.position);
-        runtime.controls.target.set(-34, 17, -102).add(runtime.model.position);
-        runtime.controls.update();
-      }}>查看②侧边</button>}
-      {fullCaptureCandidate && <details style={{ pointerEvents: 'auto' }}>
-        <summary>更多视角与全部素材</summary>
-        {[['主楼前侧', [20, 10, 100], [0, 10, 54]], ['树荫侧', [-105, 9, 10], [-72, 11, -2]], ['外围东侧', [125, 8, -25], [74, 8, -25]], ['入口区域', [68, 4, -105], [65, 2, -80]], ...(entryCorrectionCandidate ? [['③砖楼细节', [70, 9, -89], [95, 10, -87]], ['人行入口', [61, 3, -73], [61, 1, -79]]] : []), ...(/-v3\.glb$/.test(modelAsset?.name || '') ? [['入口细节', [6, 3.1, 72], [3, 2, 56]], ['藤蔓与桁架', [-98, 12, 6], [-84, 14, -4]], ['栏杆外非机动车', [35, 5, -92], [30, 1, -79]]] : [])].map(([label, position, target]) => <button key={label} type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
-          const runtime = environmentRef.current;
-          if (!runtime?.model) return;
-          runtime.camera.position.set(...position).add(runtime.model.position);
-          runtime.controls.target.set(...target).add(runtime.model.position);
-          runtime.controls.update();
-        }}>{label}</button>)}
-        <a className="secondary-button" style={{ pointerEvents: 'auto' }} href={entryCorrectionCandidate ? (/人行门-v6/.test(modelAsset?.name || '') ? '/capture-review/pedestrian-gate-v3/index.html' : /人行门-v5/.test(modelAsset?.name || '') ? '/capture-review/pedestrian-gate-v2/index.html' : '/capture-review/entry-fence-v1/index.html') : (/工程补充|连续场景与车库细化|全场地连续细化|错误构件清理版/.test(modelAsset?.name || '')) ? '/capture-review/complete-capture-20261010-v5/index.html' : /-v3\.glb$/.test(modelAsset?.name || '') ? '/capture-review/oct02-details-v3/index.html' : '/capture-review/full-capture-v1/index.html'} target="_blank" rel="noreferrer">{entryCorrectionCandidate ? (/人行门-v[56]/.test(modelAsset?.name || '') ? '人行门修正对照' : '入口与③砖楼照片对照') : (/工程补充|连续场景与车库细化|全场地连续细化|错误构件清理版/.test(modelAsset?.name || '')) ? '112份采景工程分析与定位' : /-v3\.glb$/.test(modelAsset?.name || '') ? '10月2日景物补充与定位对照' : '112份素材定位与使用情况'}</a>
-      </details>}
-      </div>
-    </details>}
-    {['main_building_facade_candidate_glb', 'site_side_path_candidate_glb'].includes(modelAsset?.kind) && <div className="direct-image-candidate-banner" role="note">
-      <strong>{modelAsset.kind === 'site_side_path_candidate_glb' ? '主楼旁小道 · 路面与两侧路缘' : '主楼 · 照片五区实景候选'}</strong>
-      <span>{modelAsset.kind === 'site_side_path_candidate_glb' ? '立面暂留待修；路宽、排水口和减速带落点为近似。' : '图1至图5对应的主楼材质已直接写入模型网格；视频尚未加入，入口、道路和其他区域保持。'}</span>
-      <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
-        const runtime = environmentRef.current;
-        if (!runtime?.model) return;
-        const bounds = new runtime.THREE.Box3();
-        const prefix = modelAsset.kind === 'site_side_path_candidate_glb' ? 'A03_PATH_' : 'main-building-exterior-review-';
-        runtime.model.traverse((object) => { if (object.isMesh && object.name.startsWith(prefix)) bounds.expandByObject(object); });
-        if (bounds.isEmpty()) return;
-        const target = bounds.getCenter(new runtime.THREE.Vector3());
-        const radius = bounds.getBoundingSphere(new runtime.THREE.Sphere()).radius;
-        const vertical = runtime.THREE.MathUtils.degToRad(runtime.camera.fov);
-        const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * runtime.camera.aspect);
-        const distance = radius / Math.sin(Math.min(vertical, horizontal) / 2) * 1.12;
-        runtime.camera.position.copy(target).add(new runtime.THREE.Vector3(0, distance * (modelAsset.kind === 'site_side_path_candidate_glb' ? .7 : .08), -distance));
-        runtime.controls.target.copy(target);
-        runtime.controls.update();
-      }}>{modelAsset.kind === 'site_side_path_candidate_glb' ? '查看小道' : '查看新增窗列'}</button>
-      {modelAsset.kind === 'site_side_path_candidate_glb' && <button type="button" className="secondary-button" style={{ pointerEvents: 'auto' }} disabled={loadState.status !== 'ready'} onClick={() => {
-        const runtime = environmentRef.current;
-        if (!runtime?.model) return;
-        runtime.camera.position.set(59, 1.85, -70.5).add(runtime.model.position);
-        runtime.controls.target.set(20, 1.3, -70.5).add(runtime.model.position);
-        runtime.controls.update();
-      }}>沿小道查看</button>}
-    </div>}
-    {modelAsset?.kind === 'main_building_facade_candidate_glb' && <details className="facade-photo-evidence-panel" open>
-      <summary><span>照片证据 · 主楼图1至图5</span><small>用户已确认区域顺序</small></summary>
-      <div className="facade-photo-zone-tabs" role="tablist" aria-label="主楼照片区域">
-        {facadePhotoZones.map((zone) => <button type="button" key={zone.id} className={selectedFacadeZone === zone.id ? 'active' : ''} aria-selected={selectedFacadeZone === zone.id} onClick={() => setSelectedFacadeZone(zone.id)}>{zone.label}</button>)}
-      </div>
-      {(() => { const zone = facadePhotoZones.find((item) => item.id === selectedFacadeZone) || facadePhotoZones[0]; return <div className="facade-photo-zone-detail">
-        <div className="facade-photo-pair"><figure><img src={zone.image} alt={`${zone.label}现场照片`} loading="lazy" /><figcaption>现场照片</figcaption></figure><figure><img src={zone.modelImage} alt={`${zone.label}当前模型位置`} loading="lazy" /><figcaption>用户指定的模型位置</figcaption></figure></div>
-         <div><strong>{zone.title}</strong><span>来源：{zone.evidence}</span><small>照片默认按地面向上视角解释；模型位置由用户截图确认。视频尚未加入本候选。</small></div>
-         <div className="facade-photo-reference-controls">
-           <button type="button" className={`secondary-button ${showFacadePhotoReference ? 'active' : ''}`} aria-pressed={showFacadePhotoReference} onClick={() => setShowFacadePhotoReference((current) => !current)}>{showFacadePhotoReference ? '关闭参考叠加' : '参考叠加'}<small>Observed photo</small></button>
-           <label><span>透明度</span><input type="range" min="0.16" max="0.78" step="0.01" value={facadePhotoReferenceOpacity} onChange={(event) => setFacadePhotoReferenceOpacity(Number(event.target.value))} /><output>{Math.round(facadePhotoReferenceOpacity * 100)}%</output></label>
-         </div>
-      </div>; })()}
-    </details>}
-    {modelAsset?.kind === 'main_building_facade_candidate_glb' && showFacadePhotoReference && (() => { const zone = facadePhotoZones.find((item) => item.id === selectedFacadeZone) || facadePhotoZones[0]; return <div className="facade-photo-reference-overlay" aria-label="现场照片参考叠加">
-      <img src={zone.image} alt={`${zone.label}现场照片参考叠加`} style={{ opacity: facadePhotoReferenceOpacity }} />
-      <div className="facade-photo-reference-badge"><strong>REFERENCE OVERLAY</strong><span>{zone.label} · Observed photo · Illustrative camera match</span><small>透明度可调；机位为手工还原，不宣称测绘级配准。</small></div>
-    </div>; })()}
-    <div className="display-mode-control">
-      <button type="button" className={`twin-mode-toggle perimeter-scope-toggle ${immediatePerimeterMode ? 'active' : ''}`} aria-pressed={immediatePerimeterMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '窗口1：主楼左侧连续段 · 两条小道 · 栅栏 · 绿化'} onClick={() => setImmediatePerimeterMode((current) => !current)}><Route size={14} />{immediatePerimeterMode ? '窗口1 · B-WALK-01 ON' : '窗口1 · B-WALK-01 OFF'}<small>主楼左侧 · Derived</small></button>
-      <details className="viewport-layer-controls">
-        <summary><Layers3 size={14} /><span>显示与仿真</span><small>图层 · 模式 · 人流</small></summary>
-        <div className="viewport-layer-controls-body">
-      <button type="button" className={`twin-mode-toggle middle-building-toggle ${middleBuildingMode ? 'active' : ''}`} aria-pressed={middleBuildingMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '导入入口层的中间建筑②'} onClick={() => setMiddleBuildingMode((current) => !current)}><Building2 size={14} />{middleBuildingMode ? '导入中间建筑② · ON' : '导入中间建筑② · OFF'}<small>原体块 · Observed</small></button>
-      <button type="button" className="twin-mode-toggle middle-building-focus" disabled={loadState.status !== 'ready' || !middleBuildingMode} title="把镜头移到中间建筑②" onClick={() => environmentRef.current?.focusMissingMiddleBuilding?.()}><LocateFixed size={14} />查看中间建筑②<small>定位镜头</small></button>
-      <button type="button" className={`twin-mode-toggle competition-presentation-toggle ${competitionPresentation ? 'active' : ''}`} aria-pressed={competitionPresentation} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : '数字衍生夜景 + 关系标签 + 视觉拥挤度'} onClick={() => { if (competitionPresentation) void exitCompetitionPresentation(); else void handleCompetitionPresentation(); }}><ScanLine size={14} />{competitionPresentation ? '退出比赛演示' : '比赛演示 · NIGHT'}<small>Derived / Simulated</small></button>
-      <button type="button" className={`twin-mode-toggle ${twinMode ? 'active' : ''}`} aria-pressed={twinMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : undefined} onClick={() => { const next = !twinMode; setTwinMode(next); environmentRef.current?.setTwinMode?.(next); }}><Sparkles size={14} />{twinMode ? '孪生模式 · ONLINE' : '开启孪生模式'}<small>Simulated</small></button>
-      <button type="button" className={`twin-mode-toggle derivative-toggle ${digitalDerivative ? 'active' : ''}`} aria-pressed={digitalDerivative} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : undefined} onClick={async () => { const next = !digitalDerivative; const result = await environmentRef.current?.setDigitalDerivative?.(next); if (result?.active === next) { setDigitalDerivative(next); if (next) setTwinMode(true); } }}><Sparkles size={14} />{digitalDerivative ? '数字衍生 · ONLINE' : '数字衍生'}<small>Derived / Simulated</small></button>
-      <button type="button" className={`twin-mode-toggle fluid-mode-toggle ${fluidMode ? 'active' : ''}`} aria-pressed={fluidMode} disabled={loadState.status !== 'ready'} title={loadState.status !== 'ready' ? '等待模型加载…' : 'Bloom 0.25 · DPR 1.0 · agent ≤150'} onClick={() => setFluidMode((current) => !current)}><Gauge size={14} />{fluidMode ? '流畅模式 · ON' : '流畅模式'}<small>FPS {fps == null ? '--' : fps}</small></button>
-      <div className="twin-agent-controls" aria-label="模拟人流控制">
-        <label title={agentPathSummary.labels.length ? `人流仅沿${agentPathSummary.labels.join('、')}分布` : '等待小路路线数据'}>小路拥挤度 · Simulated <input type="range" min="0" max="500" step="1" value={agentCount} onChange={(event) => setAgentCount(Number(event.target.value))} /><output>{congestionLabel(renderedAgentCount)}</output></label>
-        <select value={agentSlot} onChange={(event) => setAgentSlot(event.target.value)} aria-label="人流时段">
-          <option value="weekday_arrival">早高峰 08:30–09:30 · 1.0×</option>
-          <option value="weekday_midday">平峰 12:30–13:30 · 0.45×</option>
-          <option value="weekday_departure">晚高峰 17:30–18:30 · 0.9×</option>
-        </select>
-        <select value={heatmapPlan} onChange={(event) => setHeatmapPlan(event.target.value)} aria-label="热力方案">
-          <option value="P-SAFE">热力 P-SAFE · Simulated</option>
-          <option value="P-EFFICIENCY">热力 P-EFFICIENCY · Simulated</option>
-          <option value="P-BALANCED">热力 P-BALANCED · Simulated</option>
-        </select>
-      </div>
-        </div>
-      </details>
-      <div className="display-mode-switch" role="group" aria-label="模型显示模式">
-        {displayModes.map((mode) => <button type="button" key={mode.id} data-mode={mode.id} className={mode.id === displayMode ? 'active' : ''} aria-pressed={mode.id === displayMode} aria-label={`${mode.label}：${mode.detail}`} title={mode.detail} onClick={() => setDisplayMode(mode.id)}><span>{mode.index}</span>{mode.label}</button>)}
-      </div>
-      <div className="display-mode-note" aria-live="polite"><strong>{activeDisplayMode.label}</strong><span>{activeDisplayMode.detail}</span></div>
-      {displayMode === 'sunny' && <div className="sunny-render-status" aria-live="polite"><Sun size={13} /><span>{modelAsset?.kind === 'site_context_glb' ? '晴空 · 太阳方位 · 柔和补光' : '晴空 · 太阳方位 · 软阴影'}</span><em>{scenarioPoint?.sun ? `${Math.round(Number(scenarioPoint.sun.altitude_deg || 0))}° 高度角` : '标准日照预设'}</em></div>}
-    </div>
-    {immediatePerimeterMode && surfaceEditorObjects.length > 0 && <details className="surface-editor-panel" open={surfaceEditorOpen} onToggle={(event) => setSurfaceEditorOpen(event.currentTarget.open)}>
-      <summary><span>快速面层编辑</span><small>可缩短 / 伸长 / 格式刷</small></summary>
-      <div className={`surface-editor-body ${surfaceDirectEditEnabled ? 'editor-active' : 'editor-locked'} `}>
-        <div className="surface-direct-toolbar"><button type="button" className={`secondary-button ${surfaceDirectEditEnabled ? 'active' : ''}`} aria-pressed={surfaceDirectEditEnabled} onClick={() => setSurfaceDirectEditEnabled((current) => !current)}>{surfaceDirectEditEnabled ? '编辑模式 · ON' : '开启编辑模式'}</button>{surfaceDirectEditEnabled && <><button type="button" className={`secondary-button ${surfaceTransformMode === 'translate' ? 'active' : ''}`} aria-pressed={surfaceTransformMode === 'translate'} onClick={() => setSurfaceTransformMode('translate')}>移动</button><button type="button" className={`secondary-button ${surfaceTransformMode === 'scale' ? 'active' : ''}`} aria-pressed={surfaceTransformMode === 'scale'} onClick={() => setSurfaceTransformMode('scale')}>放缩</button><span>主大楼已锁定</span></>}{!surfaceDirectEditEnabled && <span className="surface-editor-locked-note">开启后点选单个对象，再进行移动、格式刷或区域裁剪</span>}</div>
-        {directSurfaceSelection && <div className="surface-direct-selection"><strong>已选中：{directSurfaceSelection.label || directSurfaceSelection.name}</strong><span>{directSurfaceSelection.width} × {directSurfaceSelection.height} × {directSurfaceSelection.length}m · {directSurfaceSelection.source}</span><div><button type="button" className="secondary-button" onClick={copyDirectSelection}>复制</button><button type="button" className="secondary-button" onClick={pasteDirectSelection}>粘贴</button><button type="button" className="secondary-button danger" onClick={deleteDirectSelection}>删除</button><button type="button" className="secondary-button" onClick={undoDirectSelectionDelete}>撤销删除</button></div><div className="surface-format-direct"><button type="button" className={`secondary-button ${directFormatBrushArmed ? 'active' : ''}`} onClick={captureDirectFormat}>{directFormatBrushArmed ? '格式刷已吸取 · 点目标' : '吸取格式（选取源）'}</button><button type="button" className="primary-button" onClick={applyDirectFormat}>格式刷到当前</button>{directFormatBrushArmed && <span>已进入选取式格式刷：点击另一个对象会自动应用</span>}</div><div className="surface-clip-tools"><strong>区域裁剪</strong><label><span>切割方向</span><select value={surfaceClipAxis} onChange={(event) => setSurfaceClipAxis(event.target.value)}><option value="x">X 轴 · 左右</option><option value="z">Z 轴 · 前后</option><option value="y">Y 轴 · 上下</option></select></label><label><span>保留侧</span><select value={surfaceClipKeepSide} onChange={(event) => setSurfaceClipKeepSide(event.target.value)}><option value="positive">正侧 · 删除负侧</option><option value="negative">负侧 · 删除正侧</option></select></label><label className="surface-clip-range"><span>切线位置 <output>{Math.round(Number(surfaceClipFraction) * 100)}%</output></span><input type="range" min="0.05" max="0.95" step="0.05" value={surfaceClipFraction} onChange={(event) => setSurfaceClipFraction(Number(event.target.value))} /></label><button type="button" className="secondary-button danger" onClick={clipDirectSelection}>刀切当前对象</button><button type="button" className="secondary-button" onClick={undoDirectSelectionClip}>撤回裁剪</button></div></div>}
-        <label className="surface-editor-select"><span>当前对象</span><select value={selectedSurfaceEditor?.id || ''} onChange={(event) => selectSurfaceEditorObject(event.target.value)}>{surfaceEditorObjects.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-        <div className="surface-editor-sliders">
-          <label><span>长度 <output>{selectedSurfaceEditor?.length?.toFixed(2) || '—'}m</output></span><input type="range" min="0.1" max="240" step="0.1" value={selectedSurfaceEditor?.length || 1} onChange={(event) => updateSurfaceEditor('length', event.target.value)} /></label>
-          <label><span>宽度 <output>{selectedSurfaceEditor?.width?.toFixed(2) || '—'}m</output></span><input type="range" min="0.1" max="180" step="0.1" value={selectedSurfaceEditor?.width || 1} onChange={(event) => updateSurfaceEditor('width', event.target.value)} /></label>
-          <label><span>X偏移 <output>{selectedSurfaceEditor?.offsetX?.toFixed(2) || '0.00'}m</output></span><input type="range" min="-120" max="120" step="0.1" value={selectedSurfaceEditor?.offsetX || 0} onChange={(event) => updateSurfaceEditor('offsetX', event.target.value)} /></label>
-          <label><span>Z偏移 <output>{selectedSurfaceEditor?.offsetZ?.toFixed(2) || '0.00'}m</output></span><input type="range" min="-120" max="120" step="0.1" value={selectedSurfaceEditor?.offsetZ || 0} onChange={(event) => updateSurfaceEditor('offsetZ', event.target.value)} /></label>
-        </div>
-        <div className="surface-editor-actions"><button type="button" className="secondary-button" onClick={resetSurfaceEditor}><RotateCcw size={13} />恢复当前对象</button><span>{surfaceEditorMessage}</span></div>
-        <small className="surface-editor-note">格式刷采用选取式：先点源对象并吸取格式，再点目标对象自动应用；源 GLB 不变。刷新页面后仍保留本机编辑参数。</small>
-      </div>
-    </details>}
-    {['site_context_glb', 'blender_enhanced_glb'].includes(modelAsset?.kind) && <div className="site-context-legend" role="note" aria-label="周边场景关系说明">
-      <div className="site-context-legend-heading"><strong>当前建立的是：主楼周边场景</strong><span>不是室内 CAD 模型</span></div>
-      <div className={`site-context-provenance ${navigationTopologyFirst ? 'ready' : 'pending'}`}>
-        <span>定位与细部来源</span>
-        <strong>{navigationTopologyFirst ? '导航尺寸 / 建筑道路拓扑：首层硬约束' : '导航首层约束：当前成果未登记'}</strong>
-        <small>{navigationTopologyFirst
-          ? `导航先确定主楼、道路方位与场地边界；视频和照片补充现场细部与材质${navigationDimensionEvidence?.fileName ? ` · 证据 ${navigationDimensionEvidence.fileName}` : ''}`
-          : '请先生成带导航配准 metadata 的周边成果，再显示首层硬约束状态。'}</small>
-      </div>
-      <div className="site-context-legend-items">
-        <span><i className="scene-swatch building" />主楼外壳</span>
-        <span><i className="scene-swatch road" />主楼侧小道</span>
-        <span><i className="scene-swatch outer-road" />栅栏外侧小道</span>
-        <span><i className="scene-swatch fence" />贯穿黑色栅栏</span>
-        <span><i className="scene-swatch gate" />行人小门</span>
-        <span><i className="scene-swatch green" />草坪与绿化</span>
-      </div>
-      <small>要看门、窗、墙体和室内空间，请在上方切换“室内模型”图层。</small>
-    </div>}
-    {floorOptions.length > 0 && <div className="floor-navigation-control">
-      <label><span>楼层</span><select aria-label="选择漫游楼层" value={selectedFloorNumber} onChange={(event) => setSelectedFloorNumber(Number(event.target.value))}>{floorOptions.map((level) => <option key={level.floorNumber} value={level.floorNumber}>{level.label || `${level.floorNumber}F`}</option>)}</select></label>
-      <button type="button" className={isolateFloor ? 'active' : ''} aria-pressed={isolateFloor} onClick={() => setIsolateFloor((current) => !current)}><Layers3 size={13} />单层剖切</button>
-      <button type="button" className={showSurroundings ? 'active' : ''} aria-pressed={showSurroundings} disabled={!contextAsset} onClick={() => setShowSurroundings((current) => !current)}><Map size={13} />周边环境</button>
-    </div>}
-    {modelAsset?.kind === 'site_context_glb' && <div className="construction-evidence-control expert-only">
-      <label><input type="checkbox" checked={showHistoricalConstruction} onChange={(event) => setShowHistoricalConstruction(event.target.checked)} /> 显示历史施工证据</label>
-      <small>{showHistoricalConstruction ? '施工围挡、塔吊与临时框架已显示，仅用于证据回看。' : '当前现场：施工对象已隐藏；永久护栏与围栏保留。'}</small>
-    </div>}
-    {modelAsset?.kind === 'site_context_glb' && modelAsset.metadata?.supplementalReferenceManifestId && <details className="reference-conflict-panel expert-only">
-      <summary><AlertTriangle size={13} /><span>补充资料矛盾与边界</span><strong>{openReferenceConflictCount} 项待核验</strong></summary>
-      <div className="reference-conflict-summary">
-        <span>{modelAsset.metadata?.supplementalReferenceImageCount || 0} 张现场图片 · {modelAsset.metadata?.supplementalReferenceArticleCount || 0} 篇 Reference</span>
-        <small>资料已绑定到当前模型，但未在无控制点的情况下改写道路线位和建筑朝向。</small>
-      </div>
-      <div className="reference-conflict-list">{supplementalReferenceConflicts.map((item) => <div key={item.id} data-status={item.status}>
-        <strong>{item.statement}</strong><span>{item.allowedAction}</span>
-      </div>)}</div>
-    </details>}
-    {(navigationMode === 'walkthrough' || navigationMode === 'route-tour') && <div className="navigation-speed-control" aria-label="漫游速度">
-      <label><Gauge size={12} /><span>{navigationMode === 'route-tour' ? '沿线速度' : '步行速度'}</span><select value={navigationMode === 'route-tour' ? routeTourSpeed : walkthroughSpeedPreset} onChange={(event) => navigationMode === 'route-tour' ? setRouteTourSpeed(Number(event.target.value)) : setWalkthroughSpeedPreset(Number(event.target.value))}>
-        <option value="0.25">逐帧核对 · 0.25 m/s</option><option value="0.5">慢速 · 0.5 m/s</option><option value="0.65">标准 · 0.65 m/s</option><option value="0.9">快速 · 0.9 m/s</option>
-      </select></label>
-    </div>}
-    {allTourSpaces.length > 0 && <div className={`space-tour-control ${showSurroundings ? 'with-context' : ''}`} aria-label="空间导览">
-      <div className="space-tour-heading"><span>空间导览</span><strong>{selectedTourIndex + 1}/{allTourSpaces.length}</strong></div>
-      <label>
-        <span>{floorOptions.find((level) => Number(level.floorNumber) === Number(selectedFloorNumber))?.label || `${selectedFloorNumber}F`}</span>
-        <select aria-label="选择参观空间" value={selectedSpaceId} onChange={(event) => visitSpace(allTourSpaces.find((space) => space.id === event.target.value))}>
-          {activeFloorSpaces.map((space) => <option key={space.id} value={space.id}>{space.displayLabel || space.label}</option>)}
-        </select>
-      </label>
-      <div className="space-tour-actions">
-        <button type="button" aria-label="上一空间" title="上一空间" disabled={selectedTourIndex <= 0} onClick={() => stepSpace(-1)}><ArrowLeft size={14} /></button>
-        <button type="button" className="visit" onClick={() => visitSpace(selectedSpace)}><Footprints size={13} />进入空间</button>
-        <button type="button" aria-label="下一空间" title="下一空间" disabled={selectedTourIndex < 0 || selectedTourIndex >= allTourSpaces.length - 1} onClick={() => stepSpace(1)}><ArrowRight size={14} /></button>
-      </div>
-      <small className="expert-only">{selectedSpace ? `${selectedSpace.evidence || 'Derived'} · ${selectedSpace.geometryStatus || 'label_anchor_only'}` : '该楼层暂无可核验空间锚点'}</small>
-    </div>}
-    {showSurroundings && contextAsset && <div className="context-registration-control" aria-label="周边环境配准参数">
-      <div><span>周边位置校准</span><em className="expert-only">Hypothesis</em></div>
-      <label>X<input type="number" step="0.5" value={registrationState.offsetXM} onChange={(event) => setRegistrationState((current) => ({ ...current, offsetXM: Number(event.target.value) }))} /></label>
-      <label>Z<input type="number" step="0.5" value={registrationState.offsetZM} onChange={(event) => setRegistrationState((current) => ({ ...current, offsetZM: Number(event.target.value) }))} /></label>
-      <label>旋转<input type="number" min="-360" max="360" step="1" value={registrationState.rotationDeg} onChange={(event) => setRegistrationState((current) => ({ ...current, rotationDeg: Number(event.target.value) }))} /></label>
-      <label>比例<input type="number" min="0.1" max="10" step="0.01" value={registrationState.scale} onChange={(event) => setRegistrationState((current) => ({ ...current, scale: Number(event.target.value) }))} /></label>
-      <button type="button" onClick={saveContextRegistration} title="保存周边配准参数"><Check size={14} /></button>
-      <small>{registrationMessage}</small>
-    </div>}
-    {semanticLegendEntries.length > 0 && <div className="expert-only"><details className="semantic-material-legend">
-      <summary><span>语义材质图例</span><strong>{semanticLegendEntries.length}</strong></summary>
-      <div>{semanticLegendEntries.map((item) => <div key={item.category}><i className="semantic-material-swatch" style={{ backgroundColor: item.color }} /><span>{item.label}</span><em>{item.count}</em></div>)}</div>
-      <small>{displayMode === 'analysis' ? '分析青图会统一着色；切回原始材质查看分类颜色。' : '颜色来自 CAD 语义分类；体量高度中的推断仍标记为 Hypothesis。'}</small>
-    </details></div>}
-    <div className="viewport-tools" role="toolbar" aria-label="三维视口控制">
-      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="放大三维视口" title="放大三维视口" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.zoomByFactor?.(0.94)}><ZoomIn size={16} /><span>放大</span></button>
-      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="缩小三维视口" title="缩小三维视口" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.zoomByFactor?.(1.06)}><ZoomOut size={16} /><span>缩小</span></button>
-      <button type="button" className="viewport-tool" data-orbit-only="true" aria-label="模型归位" title="模型归位" disabled={navigationMode !== 'orbit'} onClick={() => environmentRef.current?.fitView?.()}><LocateFixed size={16} /><span>归位</span></button>
-      <button type="button" className={`viewport-tool ${navigationMode === 'walkthrough' ? 'active' : ''}`} disabled={!walkthroughEligible || loadState.status !== 'ready'} aria-pressed={navigationMode === 'walkthrough'} aria-label={navigationMode === 'walkthrough' ? '退出建筑漫游' : '进入建筑漫游'} title={navigationMode === 'walkthrough' ? '退出建筑漫游' : '进入建筑漫游'} onClick={() => navigationMode === 'walkthrough' ? setNavigationMode('orbit') : enterWalkthrough()}><Footprints size={16} /><span>{navigationMode === 'walkthrough' ? '退出漫游' : '进入漫游'}</span></button>
-      {routeRenderable && <button type="button" className={navigationMode === 'route-tour' ? 'active route-active' : ''} aria-label={routeTourPlayback.status === 'playing' ? '暂停连续沿线漫游' : '播放连续沿线漫游'} title={routeTourPlayback.status === 'playing' ? '暂停沿线漫游' : '播放沿线漫游'} onClick={() => {
-        if (navigationMode !== 'route-tour') setNavigationMode('route-tour');
-        else if (routeTourPlayback.status === 'playing') environmentRef.current?.pauseRouteTour?.();
-        else environmentRef.current?.startRouteTour?.();
-      }}>{routeTourPlayback.status === 'playing' ? <Pause size={16} /> : <Play size={16} />}<span>{routeTourPlayback.status === 'playing' ? '暂停沿线' : '播放沿线'}</span></button>}
-      {routeRenderable && <button type="button" className="viewport-tool" aria-label="重新开始连续沿线漫游" title="重新开始沿线漫游" onClick={() => { environmentRef.current?.resetRouteTour?.(); if (navigationMode !== 'route-tour') setNavigationMode('route-tour'); }}><RotateCcw size={16} /><span>重播</span></button>}
-      {navigationMode === 'route-tour' && <button type="button" className="viewport-tool" aria-label="退出连续沿线漫游" title="退出沿线漫游" onClick={() => setNavigationMode('orbit')}><X size={16} /><span>退出沿线</span></button>}
-      {routeRenderable && displayMode === 'analysis' && <button type="button" className={`viewport-tool ${showSiteRoute ? 'active route-active' : ''}`} aria-pressed={showSiteRoute} aria-label={showSiteRoute ? '隐藏建筑周边小道' : '显示建筑周边小道'} title={showSiteRoute ? '隐藏小道' : '显示小道'} onClick={() => setShowSiteRoute((current) => !current)}><Route size={16} /><span>{showSiteRoute ? '隐藏路线' : '显示路线'}</span></button>}
-      <button type="button" className="viewport-tool" aria-label="复制当前视角链接" title="复制当前视角链接" disabled={loadState.status !== 'ready'} onClick={copyCameraLink}><Link2 size={16} /><span>分享视角</span></button>
-      <button type="button" className="viewport-tool" aria-label={isExpanded ? '退出全屏三维' : '全屏查看三维'} title={isExpanded ? '退出全屏' : '全屏查看'} onClick={toggleExpanded}>{isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}<span>{isExpanded ? '退出全屏' : '全屏'}</span></button>
-    </div>
-    {shareStatus && <div className="viewport-share-status" role="status">{shareStatus}</div>}
-    {routeRenderable && displayMode === 'analysis' && <div className={`site-route-badge ${showSiteRoute ? 'visible' : 'hidden'}`} aria-live="polite">
-      <i /><span><strong>{primarySiteRoute.label}</strong>{showSiteRoute ? `${siteRouteStats.lengthM ? `${Math.round(siteRouteStats.lengthM)}m · ` : ''}近似配准连续路线` : '路线图层已隐藏'}<small className="expert-only">7段现场视频 + 片段边界显式配准 · local_enu_m · 非测绘线位</small></span>
-    </div>}
-    {navigationMode === 'route-tour' && <div className="route-tour-hud" aria-live="polite">
-       <div><Route size={14} /><span>连续沿线漫游</span><strong>{routeTourSpeed.toFixed(1)} m/s</strong></div>
-      <progress max="1" value={routeTourPlayback.progress || 0} />
-      <span>{Math.round(routeTourPlayback.distanceM || 0)} / {Math.round(siteRouteStats.lengthM || 0)} m · {routeTourPlayback.status === 'playing' ? '播放中' : routeTourPlayback.status === 'ended' ? '已到终点' : '已暂停'}</span>
-      <small className="expert-only">普通展示不分章节；片段、时间戳和推定连接区间保留在内部证据映射。</small>
-    </div>}
-    {navigationMode === 'walkthrough' && <>
-      <div className="walkthrough-hud" aria-live="polite">
-        <div><Footprints size={14} /><span>步行参观</span><strong>{floorOptions.find((level) => Number(level.floorNumber) === Number(selectedFloorNumber))?.label || `${selectedFloorNumber}F`}</strong></div>
-        {selectedSpace && <span>当前空间：{selectedSpace.displayLabel || selectedSpace.label}</span>}
-         <em className="expert-only">{walkthroughEvidence}</em>
-         <span className="expert-only">{showSurroundings ? '窗外周边：人工配准 Hypothesis' : '窗外周边：未启用'}</span>
-         <small>移动速度：{walkthroughSpeed ? `${walkthroughSpeed.toFixed(1)} m/s` : '加载中'} · 适合逐空间查看</small>
-         {/* The former “当前无碰撞约束” status is intentionally retired now that model-backed probes are active. */}
-         <small>{walkthroughCollisionStats.enabled ? '防穿墙与边界保护已启用' : '当前仅启用楼层边界保护'}<span className="expert-only"> · {walkthroughCollisionStats.candidates} 组候选几何 · {selectedSpace ? `${selectedSpace.geometryStatus || 'label_anchor_only'}${walkthroughSpawnNotice ? ' · 已使用楼层安全落点' : ''}` : '楼层落点需人工复核'}</span></small>
-         {walkthroughSpawnNotice && <small className="expert-only">{walkthroughSpawnNotice}</small>}
-      </div>
-      <div className="walkthrough-crosshair" aria-hidden="true" />
-      <div className="walkthrough-dpad" role="group" aria-label="建筑漫游方向控制">
-        {walkthroughControl('forward', '向前移动', ArrowUp, 'forward')}
-        {walkthroughControl('left', '向左移动', ArrowLeft, 'left')}
-        {walkthroughControl('right', '向右移动', ArrowRight, 'right')}
-        {walkthroughControl('backward', '向后移动', ArrowDown, 'backward')}
-      </div>
-    </>}
-    <div className="model-fidelity expert-only" aria-live="polite">
-      <div><span>MODEL SOURCE</span><strong>{modelFidelity.title}</strong></div>
-      <p>{modelFidelity.detail}</p>
-      <small>{modelStats.meshes} 构件 · {modelStats.materials} 材质 · {modelStats.textures} 纹理</small>
-      <em>{modelFidelity.coordinate}</em>
-    </div>
-    {!['preview', 'ready'].includes(loadState.status) && <div className={`viewport-state ${loadState.status}`}><Box size={28} /><strong>{loadState.status === 'error' ? '模型加载失败' : '正在加载真实三维资产'}</strong><span>{loadState.message}</span>{loadState.status === 'error' && <button type="button" className="secondary-button" onClick={() => setModelLoadAttempt((value) => value + 1)}><RefreshCw size={13} />重试加载</button>}</div>}
-  </div></>;
-}
-
-function ViewportEmptyState({ icon: Icon, title, text }) {
-  return <div className="viewport-empty"><Icon size={31} /><strong>{title}</strong><span>{text}</span></div>;
-}
-
-function RealVideoViewport({ asset, visionJob, sourceNature = 'field_observation' }) {
-  const state = visionJob?.assetId === asset.id ? visionJob.status : 'not_started';
-  const annotatedArtifact = visionJob?.output?.artifacts?.find((artifact) => artifact.kind === 'annotated_video');
-  const [viewMode, setViewMode] = useState(annotatedArtifact ? 'annotated' : 'original');
-  useEffect(() => { setViewMode(annotatedArtifact ? 'annotated' : 'original'); }, [asset.id, annotatedArtifact?.id]);
-  const showingAnnotated = viewMode === 'annotated' && Boolean(annotatedArtifact);
-  const processing = ['queued', 'running'].includes(state);
-  const testOnly = sourceNature === 'virtual_test' || asset.testOnly || visionJob?.sourceNature === 'virtual_test';
-  const label = showingAnnotated
-    ? '当前显示人员、车辆与轨迹识别结果。'
-    : state === 'succeeded'
-      ? '当前显示原始视频，可切换到识别结果。'
-      : processing
-        ? '视频正在分析，完成后可切换查看结果。'
-        : state === 'blocked' || state === 'failed'
-          ? '该视频分析未完成，当前仍显示原始视频。'
-          : '当前是原始视频，尚未开始分析。';
-  return <div className="real-video-viewport">
-    <video key={`${asset.id}:${showingAnnotated ? annotatedArtifact.id : 'original'}`} src={showingAnnotated ? annotatedArtifact.url : asset.url} controls preload="metadata" aria-label={`${showingAnnotated ? '标注结果' : '原始视频'}：${asset.name}`} />
-    <div className="video-source-switch" role="group" aria-label="视频证据图层">
-      <button type="button" aria-pressed={viewMode === 'original'} className={viewMode === 'original' ? 'active' : ''} onClick={() => setViewMode('original')}>{testOnly ? '演示视频' : '原始视频'}</button>
-      <button type="button" aria-pressed={viewMode === 'annotated'} className={viewMode === 'annotated' ? 'active' : ''} disabled={!annotatedArtifact} onClick={() => setViewMode('annotated')}>识别结果</button>
-    </div>
-    <div className="viewport-hud expert-only"><span>{testOnly ? '虚拟测试视频 · TEST ONLY' : showingAnnotated ? '真实标注视频' : '真实原始视频'}</span><span>{state.replace('_', ' ').toUpperCase()}</span><span>{visionJob?.stage?.replaceAll('_', ' ').toUpperCase() || 'CALIBRATION NONE'}</span></div>
-    <div className="video-truth-note">{label}</div>
+    <div className="amap-delivery-source-links"><a href="/evidence/amap-delivery-20261005/README-请先读我.md" target="_blank" rel="noreferrer">打开原始 README</a><a href="/evidence/amap-delivery-20261005/分析整理报告.md" target="_blank" rel="noreferrer">打开完整分析报告</a><a href="/evidence/amap-delivery-20261005/三条小道专项分析补充.md" target="_blank" rel="noreferrer">打开三条小道补充分析</a></div>
   </div>;
 }
 
-function CameraCapture({ project, busy, setBusy, notify, refresh }) {
-  const previewRef = useRef(null);
-  const streamRef = useRef(null);
-  const recorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const [state, setState] = useState('idle');
+function VisionWorkspace({ project, assets, artifacts, transportPlan, settings, health, jobs, jobEvents, jobStreamStatus, observations, busy, setBusy, notify, refresh, nextStep }) {
+  const videos = assets.filter((asset) => isVisibleProjectVideo(asset));
+  const evidenceInputRef = useRef(null);
+  const [selectedVideo, setSelectedVideo] = useState(videos[0]?.id || '');
+  const [slot, setSlot] = useState(settings.timeSlots?.[0]?.id || 'weekday_arrival');
+  const [duration, setDuration] = useState(600);
+  const [sampleFps, setSampleFps] = useState(20);
+  const [sourceMode, setSourceMode] = useState('upload');
+  const [capturedAt, setCapturedAt] = useState('');
+  const [weather, setWeather] = useState('unknown');
+  const [cameraId, setCameraId] = useState('主入口机位');
+  const selectedAsset = videos.find((asset) => asset.id === selectedVideo);
+  const [sourceNature, setSourceNature] = useState(() => selectedAsset?.sourceNature || (/virtual|synthetic|test|not[-_\s]?observed/i.test(selectedAsset?.name || '') ? 'virtual_test' : 'field_observation'));
+  const [zonesText, setZonesText] = useState('[]');
+  const [controlPointsText, setControlPointsText] = useState('[]');
+  const [rtspUrl, setRtspUrl] = useState('');
+  const [rtspResult, setRtspResult] = useState(null);
 
-  useEffect(() => () => {
-    recorderRef.current?.state === 'recording' && recorderRef.current.stop();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-  }, []);
+  useEffect(() => { if (!selectedVideo && videos[0]) setSelectedVideo(videos[0].id); }, [videos.length]);
+  useEffect(() => {
+    const asset = videos.find((item) => item.id === selectedVideo);
+    if (asset) setSourceNature(asset.sourceNature || (/virtual|synthetic|test|not[-_\s]?observed/i.test(asset.name || '') ? 'virtual_test' : 'field_observation'));
+  }, [selectedVideo]);
 
-  const connect = async () => {
-    if (!project) return notify('error', '请先创建项目');
-    if (!navigator.mediaDevices?.getUserMedia) return notify('error', '当前浏览器或页面协议不支持摄像头访问');
+  const analyze = async () => {
+    if (!selectedVideo) return notify('error', '请先在第一步上传一个真实短视频');
+    if (!capturedAt) return notify('error', '请填写视频的真实拍摄日期与时间');
+    let zones;
+    try { zones = JSON.parse(zonesText); } catch { return notify('error', 'ROI / 计数线配置不是合法 JSON'); }
+    if (!Array.isArray(zones)) return notify('error', 'ROI / 计数线配置必须是数组');
+    let controlPoints;
+    try { controlPoints = JSON.parse(controlPointsText); } catch { return notify('error', '控制点配置不是合法 JSON'); }
+    if (!Array.isArray(controlPoints)) return notify('error', '控制点配置必须是数组');
+    setBusy(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
-      streamRef.current = stream;
-      if (previewRef.current) previewRef.current.srcObject = stream;
-      setState('ready');
-    } catch (error) { notify('warning', `摄像头连接失败：${error.message}`); }
+      const windowResult = await api('/video/windows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ assetId: selectedVideo, slotId: slot, label: settings.timeSlots.find((s) => s.id === slot)?.label, durationSeconds: duration, dayType: 'normal_weekday', capturedAt, weather, cameraId, sourceNature, zones, calibration: { mode: 'none' } }) });
+      if (controlPoints.length) await api(`/video/windows/${windowResult.window.id}/calibration`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controlPoints }) });
+      await api('/vision/analyze', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ assetId: selectedVideo, slotId: slot, windowId: windowResult.window.id, sourceNature, fps: sampleFps }) });
+      notify('success', `${sourceNature === 'virtual_test' ? '虚拟测试' : '真实'} YOLO 分析已进入队列`);
+    } catch (error) { notify('warning', error.message, error.details); }
+    finally { setBusy(false); refresh(); }
   };
 
-  const startRecording = () => {
-    if (!streamRef.current) return notify('error', '请先连接摄像头');
-    if (!window.MediaRecorder) return notify('error', '当前浏览器不支持 MediaRecorder');
-    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((type) => MediaRecorder.isTypeSupported(type));
-    const recorder = new MediaRecorder(streamRef.current, mimeType ? { mimeType } : undefined);
-    chunksRef.current = [];
-    recorder.ondataavailable = (event) => { if (event.data?.size) chunksRef.current.push(event.data); };
-    recorder.onstop = async () => {
-      if (!chunksRef.current.length) return notify('error', '摄像头没有产生可上传的视频数据');
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'video/webm' });
-      const file = new File([blob], `camera-${new Date().toISOString().replaceAll(':', '-')}.webm`, { type: blob.type });
-      const form = new FormData();
-      form.append('files', file);
-      setBusy(true);
-      try {
-        await api('/assets/upload', { method: 'POST', body: form });
-        notify('success', '摄像头实录已上传并计算 SHA-256，可作为典型片段选择');
-        await refresh();
-      } catch (error) { notify('error', error.message, error.details); }
-      finally { setBusy(false); setState('ready'); }
-    };
-    recorder.start(1000);
-    recorderRef.current = recorder;
-    setState('recording');
+  const latestVisionJob = [...jobs].reverse().find((job) => job.type === 'vision_analysis' && (!selectedVideo || job.assetId === selectedVideo));
+  const selectedVideoAsset = videos.find((asset) => asset.id === selectedVideo);
+  const latestObservation = [...observations].reverse().find((item) => item.schema === 'observation_bundle.v1' && (!selectedVideo || item.sourceAssetId === selectedVideo));
+  const allObservationMetrics = latestObservation?.metrics || [];
+  const directionalRates = allObservationMetrics.filter((metric) => metric.kind === 'line_crossing_flow_rate');
+  const summarizeFlow = (actors) => {
+    const actorDirections = directionalRates.filter((metric) => actors.includes(metric.actor));
+    const fallback = allObservationMetrics
+      .filter((metric) => metric.kind === 'unique_track_flow_rate' && actors.includes(metric.actor))
+      .reduce((sum, metric) => sum + Number(metric.value || 0), 0);
+    const aToB = actorDirections.filter((metric) => metric.direction === 'a_to_b').reduce((sum, metric) => sum + Number(metric.value || 0), 0);
+    const bToA = actorDirections.filter((metric) => metric.direction === 'b_to_a').reduce((sum, metric) => sum + Number(metric.value || 0), 0);
+    return { total: actorDirections.length ? aToB + bToA : fallback, aToB, bToA, directional: actorDirections.length > 0 };
   };
-
-  const stopRecording = () => {
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-  };
-
-  return <div className="camera-capture"><video ref={previewRef} autoPlay muted playsInline /><div className="camera-actions"><button className="secondary-button" disabled={busy || state === 'recording'} onClick={connect}><Radio size={14} /> {state === 'idle' ? '连接摄像头' : '重新连接'}</button>{state === 'recording' ? <button className="record-button active" onClick={stopRecording}><i /> 停止并上传</button> : <button className="record-button" disabled={state !== 'ready' || busy} onClick={startRecording}><i /> 开始实录</button>}</div><small>录制内容只在点击“停止并上传”后进入证据链；建议连续录制 5–20 分钟。</small></div>;
-}
-
-function JobEventTimeline({ events, streamStatus }) {
-  if (!events?.length) return <div className="job-events empty">{streamStatus?.message ? <span className="job-stream-status"><i className={streamStatus.state === 'connected' ? 'done' : 'failed'} />{streamStatus.message}</span> : '任务启动后显示真实工具事件'}</div>;
-  return <div className="job-events">{streamStatus?.message && <div className="job-stream-status"><i className={streamStatus.state === 'connected' ? 'done' : 'failed'} /><span>{streamStatus.message}</span></div>}{events.slice(-5).map((event) => <div key={event.id}><i className={event.type.includes('failed') ? 'failed' : event.type.includes('completed') ? 'done' : 'running'} /><span>{event.payload?.title || event.payload?.outputSummary || event.payload?.error || event.type}</span><small>{new Date(event.at).toLocaleTimeString('zh-CN', { hour12: false })}</small></div>)}</div>;
-}
-
-function SemanticObjectRegistry({ project, assets, artifacts, sceneObjects, busy, setBusy, notify, refresh }) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ id: '', type: 'gate', label: '', geometry: '', evidenceLevel: 'Hypothesis' });
-  const geojsonAssets = [
-    ...assets.filter((asset) => asset.name && asset.name.toLowerCase().endsWith('.geojson')).map((asset) => ({ ...asset, importLabel: asset.name })),
-    ...artifacts.filter((artifact) => ['dwg_plan_geojson', 'osm_context_geojson'].includes(artifact.kind) && artifact.metadata?.stale !== true).map((artifact) => ({ ...artifact, name: artifact.title, importLabel: `${artifact.title} · 阶段产物` }))
+  const pedestrianFlow = summarizeFlow(['person']);
+  const motorFlow = summarizeFlow(['car', 'truck', 'bus', 'motorcycle']);
+  const bicycleFlow = summarizeFlow(['bicycle']);
+  const directionUnit = (flow) => flow.directional ? `A→B ${flow.aToB.toFixed(2)} · B→A ${flow.bToA.toFixed(2)}` : '未配置方向计数线';
+  const vehicleBreakdown = ['car', 'truck', 'bus', 'motorcycle']
+    .map((actor) => ({ actor, flow: summarizeFlow([actor]).total }))
+    .filter((item) => item.flow > 0)
+    .map((item) => `${actorLabels[item.actor]} ${item.flow.toFixed(2)}`)
+    .join(' · ');
+  const occupancyValue = Math.max(0, ...(latestObservation?.metrics || []).filter((metric) => ['zone_occupancy_rate', 'region_observation_share'].includes(metric.kind)).map((metric) => Number(metric.value || 0)));
+  const verification = latestObservation?.verification;
+  const verificationLabel = verification?.status === 'within_tolerance' ? '通过' : verification?.status === 'review_required' ? '需复核' : verification?.status === 'unavailable' ? '不可用' : '未启用';
+  const verificationDetail = verification?.max_disagreement_ratio != null
+    ? `最大差异 ${Math.round(Number(verification.max_disagreement_ratio) * 100)}% · 门槛 ${Math.round(Number(verification.tolerance_ratio || 0.05) * 100)}%`
+    : '稳定状态机 · Supervision LineZone';
+  const observationMetrics = [
+    { label: '人流量', value: latestObservation ? pedestrianFlow.total.toFixed(2) : '—', unit: latestObservation ? directionUnit(pedestrianFlow) : '人 / 分钟' },
+    { label: '机动车流量', value: latestObservation ? motorFlow.total.toFixed(2) : '—', unit: latestObservation ? directionUnit(motorFlow) : '辆 / 分钟' },
+    { label: '自行车流量', value: latestObservation ? bicycleFlow.total.toFixed(2) : '—', unit: latestObservation ? directionUnit(bicycleFlow) : '辆 / 分钟' },
+    { label: '双计数器交叉校验', value: latestObservation ? verificationLabel : '—', unit: latestObservation ? verificationDetail : '尚无结果' },
+    { label: '区域占用峰值', value: latestObservation && occupancyValue ? `${Math.round(occupancyValue * 100)}%` : '—', unit: latestObservation ? '系统计算' : '未运行' },
+    { label: '冲突事件', value: latestObservation ? String(latestObservation.conflicts?.length || 0) : '—', unit: latestObservation ? '起' : '尚无结果' }
   ];
-  const [geojsonAssetId, setGeojsonAssetId] = useState('');
-  const [geojsonCoordinateSpace, setGeojsonCoordinateSpace] = useState('local_enu');
-  useEffect(() => { if (!geojsonAssetId && geojsonAssets[0]) setGeojsonAssetId(geojsonAssets[0].id); }, [geojsonAssets.length, geojsonAssetId]);
-  const save = async (event) => {
-    event.preventDefault();
-    if (!project) return notify('error', '请先创建项目');
-    let geometry;
-    try { geometry = JSON.parse(form.geometry); } catch { return notify('error', 'Geometry 不是合法 GeoJSON 几何对象'); }
-    setBusy(true);
-    try {
-      await api('/scene/objects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: form.id, type: form.type, label: form.label, geometry, evidenceLevel: form.evidenceLevel }) });
-      setForm({ id: '', type: 'gate', label: '', geometry: '', evidenceLevel: 'Hypothesis' });
-      setOpen(false);
-      notify('success', '语义对象已登记，可被方案动作按 ID 引用');
-      await refresh();
-    } catch (error) { notify('error', error.message, error.details); }
-    finally { setBusy(false); }
-  };
-  const importGeoJson = async () => {
-    if (!geojsonAssetId) return notify('warning', '请先上传并选择 .geojson 文件');
-    setBusy(true);
-    try {
-      const result = await api('/scene/import-geojson', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ assetId: geojsonAssetId, coordinateSpace: geojsonCoordinateSpace })
-      });
-      notify('success', `已导入 ${result.import.importedCount} 个可追溯语义对象`);
-      await refresh();
-    } catch (error) { notify('error', error.message, error.details); }
-    finally { setBusy(false); }
-  };
-  return <div className="semantic-registry">
-    <div className="registry-head"><span>可编辑语义层</span><strong>{sceneObjects.length} OBJECTS</strong><button className="text-button" onClick={() => setOpen(!open)}>{open ? '取消' : '登记对象'}</button></div>
-    <div className="geojson-import">
-      <div><strong>批量导入 GeoJSON</strong><span>DWG / SKP 转换后的矢量对象</span></div>
-      <label><span>源文件</span><select value={geojsonAssetId} onChange={(event) => setGeojsonAssetId(event.target.value)}><option value="">{geojsonAssets.length ? '选择文件' : '暂无 GeoJSON'}</option>{geojsonAssets.map((asset) => <option value={asset.id} key={asset.id}>{asset.importLabel}</option>)}</select></label>
-      <label><span>坐标语义</span><select value={geojsonCoordinateSpace} onChange={(event) => setGeojsonCoordinateSpace(event.target.value)}><option value="local_enu">本地 ENU（米）</option><option value="wgs84">WGS84 经纬度</option></select></label>
-      <button className="secondary-button" disabled={busy || !project || !geojsonAssetId} onClick={importGeoJson}><Layers3 size={14} /> 批量登记</button>
-    </div>
-    {open && <form onSubmit={save}><div className="field-row"><label><span>对象 ID</span><input required value={form.id} onChange={(event) => setForm({ ...form, id: event.target.value })} placeholder="gate-west" /></label><label><span>类型</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option value="gate">出入口</option><option value="road">道路</option><option value="walkway">步行区</option><option value="loading_zone">卸货区</option><option value="dropoff_zone">落客区</option><option value="lighting">照明</option><option value="landscape">景观</option></select></label></div><div className="field-row"><label><span>标签</span><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} /></label><label><span>证据类型</span><select value={form.evidenceLevel} onChange={(event) => setForm({ ...form, evidenceLevel: event.target.value })}><option value="Observed">Observed · 现场确认</option><option value="Derived">Derived · 确定性计算</option><option value="Hypothesis">Hypothesis · 人工/模型假设</option><option value="Scenario">Scenario · 情景推演</option></select></label></div><label><span>GeoJSON Geometry / 本地 ENU</span><textarea required value={form.geometry} onChange={(event) => setForm({ ...form, geometry: event.target.value })} placeholder='{"type":"Point","coordinates":[12.4,3.1,0]}' /></label><button className="secondary-button wide" disabled={busy} type="submit"><Plus size={14} /> 写入语义对象</button></form>}
-    {!open && sceneObjects.slice(-3).map((object) => <div className="registry-row" key={object.id}><code>{object.id}</code><span>{object.label || object.type}</span><i className={`evidence-dot ev-${object.evidenceLevel.toLowerCase().replace(' ', '-')}`} /></div>)}
-  </div>;
-}
-
-function ProjectLibrary({ projects, activeProjectId, projectLibraryState, busy, setBusy, notify, refresh, onRetry, onClose }) {
-  const serviceReady = projectLibraryState.status === 'ready';
-  const [creating, setCreating] = useState(serviceReady && projects.length === 0);
-  const [form, setForm] = useState({ name: '', address: '', latitude: '', longitude: '', coordinateSystem: 'WGS84' });
-  const activeProjects = projects.filter((project) => project.status !== 'archived');
-  const archivedProjects = projects.filter((project) => project.status === 'archived');
-
-  useEffect(() => {
-    if (projectLibraryState.status === 'ready' && projects.length === 0) setCreating(true);
-  }, [projectLibraryState.status, projects.length]);
-
-  useEffect(() => {
-    const closeOnEscape = (event) => { if (event.key === 'Escape') onClose(); };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', closeOnEscape);
+  const activityVideos = [
+    { id: 'd02fa2f010b49d0a627016fcf4eb1860', name: '交通流量视频 01 · d02fa2f0.mp4', url: '/activity-videos/d02fa2f010b49d0a627016fcf4eb1860.mp4', sourceNature: 'field_observation' },
+    { id: '06fff672f5812642f2fd04aa8fc3327e', name: '交通流量视频 02 · 06fff672.mp4', url: '/activity-videos/06fff672f5812642f2fd04aa8fc3327e.mp4', sourceNature: 'field_observation' }
+  ];
+  const activityDataFiles = assets.filter((asset) => /\.(csv|xlsx?|json)$/i.test(asset.name || ''));
+  const activitySimulation = transportPlan?.lastSimulation || null;
+  const activityAnalysis = [
+    { id: 'fb93278a5dfeb43576fcab66c2e8d990', title: '主入口移动段', text: '箭尾到箭头保持连续直行，没有右转，也没有新增支路；用于判断入口支路的连续关系。', level: 'Observed + Derived' },
+    { id: 'b67dcc09ead45fc1b2e9aa28ddb89952', title: 'B67 定点环视段', text: '定点环视确认窄车道、黑色围栏、绿化岛、白栏和路面标线的相对关系；世界朝向仍按操作者坐标锚点处理。', level: 'Observed + Derived' }
+  ];
+  const bwalkPathDefinitions = [
+    {
+      id: 'west-gate-walkway',
+      label: '西门—主楼人行小道',
+      fallbackPedestrians: 132,
+      retrofitPedestrians: 132,
+      basis: 'weekday-0830 west-gate-walkway 独立 Scenario 值；不与地铁接驳线相加。'
+    },
+    {
+      id: 'south-service-lane',
+      label: '南侧后勤/非机动车混行线',
+      fallbackPedestrians: 86,
+      retrofitPedestrians: 86,
+      basis: 'weekday-0830 south-service-lane 独立 Scenario 值；车辆存在不换算为人流。'
+    }
+  ];
+  const bwalkRouteRows = bwalkPathDefinitions.map((definition) => {
+    const result = activitySimulation?.roadResults?.find((item) => item.roadId === definition.id);
+    const currentPedestrians = Number(result?.flow?.pedestrians ?? definition.fallbackPedestrians);
+    return {
+      ...definition,
+      currentPedestrians,
+      retrofitPedestrians: activitySimulation ? currentPedestrians : definition.retrofitPedestrians
     };
-  }, [onClose]);
-
-  const createProject = async (event) => {
-    event.preventDefault();
+  });
+  const bwalkGateAfter = { currentPedestrians: 0, retrofitPedestrians: 60, label: '推荐方案A · 地面小门', basis: 'B-WALK-01 leisureWalkScenario.default=60 人/小时；仅作跨围栏 Scenario，不并入两条既有小路。' };
+  const bwalkCurrentMetric = `${bwalkRouteRows[0]?.currentPedestrians ?? 132} / ${bwalkRouteRows[1]?.currentPedestrians ?? 86} 人/小时`;
+  const bwalkRetrofitMetric = `${bwalkCurrentMetric.replace(' 人/小时', '')} + ${bwalkGateAfter.retrofitPedestrians} 人/小时`;
+  const bwalkOptions = [
+    { id: 'FENCE-BASELINE-CLOSED', label: '现状：连续围栏', metric: bwalkCurrentMetric, detail: '两条小路分别读取，不合并2号口、4号口接驳线；入口与另一侧小道的绕行距离待现场复测。', tone: 'baseline' },
+    { id: 'ACCESS-01-GROUND-GATE', label: '方案A：入口对齐地面小门（推荐）', metric: bwalkRetrofitMetric, detail: '两条既有小路压力保持独立；新增小门承载 60 人/小时散步 Scenario，把通行关系由绕行改为直达，待现场穿越计数校准。', tone: 'recommended' },
+    { id: 'ACCESS-02-AT-GRADE-PATH', label: '方案B：草坪内透水通道', metric: bwalkRetrofitMetric, detail: '采用同一 60 人/小时散步需求作为比较基线；通道占用草坪的宽度和树根边界待现场确认。', tone: 'alternative' },
+    { id: 'ACCESS-03-LIGHT-BOARDWALK', label: '方案C：轻型架空栈道/小桥', metric: bwalkRetrofitMetric, detail: '仍使用同一散步需求 Scenario；只改变通行关系，不把新增需求伪装成实测增量。', tone: 'alternative' }
+  ];
+  const importActivityFiles = async (fileList) => {
+    if (!fileList?.length || !project) return;
+    const form = new FormData();
+    form.append('sourceNature', 'field_observation');
+    [...fileList].forEach((file) => form.append('files', file));
     setBusy(true);
     try {
-      await api('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(form) });
-      notify('success', '新项目已建立并切换为当前卷宗');
-      await refresh();
-      onClose();
-    } catch (error) { notify('error', error.message, error.details); }
+      const result = await api('/assets/upload', { method: 'POST', body: form });
+      notify('success', `活动证据已导入 ${result.assets?.length || 0} 份`, '视频、表格和原始文件已进入项目证据链。');
+      await refresh({ silent: true });
+    } catch (error) { notify('error', '活动证据导入失败', error.message); }
+    finally { setBusy(false); }
+  };
+  const actualSampleFps = Number(latestObservation?.sampling?.actual_fps || latestObservation?.rawSummary?.sample_fps || 0);
+  const shortTrackRatio = Number(latestObservation?.quality?.short_track_ratio || 0);
+  const qualityWarnings = latestObservation ? [
+    shortTrackRatio >= 0.35 ? `短轨迹占比 ${Math.round(shortTrackRatio * 100)}%，类别判断和 ID 连续性需人工抽核。` : null,
+    directionalRates.length === 0 ? '未产生稳定过线事件：请检查计数线位置，方向结果暂不可用。' : null,
+    verification?.status === 'review_required' ? `双计数器差异超过 ${Math.round(Number(verification.tolerance_ratio || 0.05) * 100)}%，请使用 CVAT 人工真值复核。` : null,
+  ].filter(Boolean) : [];
+
+  const testRtsp = async () => {
+    if (!rtspUrl.trim()) return notify('error', '请输入 RTSP 地址');
+    setBusy(true);
+    try {
+      const result = await api('/sources/rtsp/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: rtspUrl }) });
+      setRtspResult(result.source);
+      notify('success', 'RTSP 源已通过真实连接和解码测试');
+    } catch (error) { setRtspResult(null); notify('warning', error.message, error.details); }
     finally { setBusy(false); }
   };
 
-  const switchProject = async (projectId) => {
-    setBusy(true);
-    try {
-      await api(`/projects/${projectId}/activate`, { method: 'POST' });
-      await refresh();
-      notify('success', '当前项目已切换，工作区数据已重新载入');
-      onClose();
-    } catch (error) { notify('error', error.message, error.details); }
-    finally { setBusy(false); }
-  };
-
-  const setProjectStatus = async (projectId, status) => {
-    setBusy(true);
-    try {
-      await api(`/projects/${projectId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status }) });
-      await refresh();
-      notify('success', status === 'archived' ? '项目已归档，原始资料与成果均保留' : '项目已恢复');
-    } catch (error) { notify('error', error.message, error.details); }
-    finally { setBusy(false); }
-  };
-
-  const ProjectEntry = ({ item, archived = false }) => (
-    <article className={`project-dossier ${item.id === activeProjectId ? 'current' : ''} ${archived ? 'archived' : ''}`}>
-      <div className="dossier-index expert-only"><span>{item.id.slice(-6).toUpperCase()}</span><i>{item.id === activeProjectId ? 'CURRENT' : archived ? 'ARCHIVED' : 'ACTIVE'}</i></div>
-      <div className="dossier-copy"><strong>{item.name}</strong><small>{item.address || <><span className="operator-only">未填写场地说明</span><span className="expert-only">{item.latitude}, {item.longitude}</span></>}</small><div><span>{item.counts?.assets || 0} 份资料</span><span>{item.counts?.observations || 0} 次视频分析</span><span>{item.counts?.artifacts || 0} 份成果</span></div></div>
-      <div className="dossier-actions">
-        {!archived && item.id !== activeProjectId && <button type="button" className="secondary-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => switchProject(item.id)}>切换项目</button>}
-        {!archived && <button type="button" className="text-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setProjectStatus(item.id, 'archived')}><Archive size={13} />归档项目</button>}
-        {archived && <button type="button" className="text-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setProjectStatus(item.id, 'active')}><RefreshCw size={13} />恢复项目</button>}
-      </div>
-    </article>
-  );
-
-  return <div className="project-library-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="project-library" role="dialog" aria-modal="true" aria-labelledby="project-library-title">
-      <header className="project-library-header"><div><span className="expert-only">PROJECT DOSSIERS / LOCAL WORKSPACE</span><h2 id="project-library-title">项目卷宗库</h2><p>每个项目的资料、分析和成果都独立保存；切换项目不会删除其他项目。</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="关闭项目卷宗库"><X size={19} /></button></header>
-      <div className="project-library-toolbar"><strong>{projectLibraryState.status === 'loading' ? '正在连接项目库' : projectLibraryState.status === 'error' ? `${projects.length} 个缓存项目` : `${projects.length} 个项目`}</strong><button type="button" className="primary-button" disabled={busy || projectLibraryState.status !== 'ready'} onClick={() => setCreating((value) => !value)}><Plus size={14} />新建项目</button></div>
-      {projectLibraryState.status !== 'ready' && <div className={`project-library-connection ${projectLibraryState.status}`}>
-        {projectLibraryState.status === 'loading' ? <RefreshCw size={18} /> : <AlertTriangle size={18} />}
-        <div><strong>{projectLibraryState.status === 'loading' ? '正在连接项目服务' : '项目服务离线'}</strong><span>{projectLibraryState.status === 'loading' ? '正在读取本地卷宗库，请稍候。' : '项目数据没有被删除。当前仅显示上次成功同步的卷宗清单，服务恢复后会自动重新载入。'}</span></div>
-        {projectLibraryState.status === 'error' && <button type="button" className="secondary-button" onClick={onRetry}><RefreshCw size={14} />立即重试</button>}
-      </div>}
-      {creating && serviceReady && <form className="project-create-form" onSubmit={createProject}>
-        <label><span>项目名称</span><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="某集团办公楼更新" /></label>
-        <label><span>地址 / 场地说明</span><input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="项目卷宗说明" /></label>
-        <label><span>纬度</span><input required type="number" step="any" value={form.latitude} onChange={(event) => setForm({ ...form, latitude: event.target.value })} /></label>
-        <label><span>经度</span><input required type="number" step="any" value={form.longitude} onChange={(event) => setForm({ ...form, longitude: event.target.value })} /></label>
-        <label><span>坐标系</span><select value={form.coordinateSystem} onChange={(event) => setForm({ ...form, coordinateSystem: event.target.value })}><option>WGS84</option><option>GCJ-02</option><option>BD-09</option></select></label>
-        <button className="primary-button" type="submit" disabled={busy}><Check size={14} />建立卷宗</button>
-      </form>}
-      <div className="project-library-body">
-        {(serviceReady || projects.length > 0) && <section><h3>{serviceReady ? '使用中的项目' : '上次同步的使用中项目'}</h3>{activeProjects.length ? activeProjects.map((item) => <ProjectEntry key={item.id} item={item} />) : <EmptyLine text="暂无使用中的项目" />}</section>}
-        {!serviceReady && projects.length === 0 && <EmptyLine text="项目清单尚未载入，等待服务恢复" />}
-        {archivedProjects.length > 0 && <section><h3>已归档项目</h3>{archivedProjects.map((item) => <ProjectEntry key={item.id} item={item} archived />)}</section>}
+  return (
+    <section className="stage-layout">
+      <StageHeading eyebrow="STEP 03 / FLOW OBSERVATION" title="流动观测" description="只保留高德完整交付表格、既有表格分析和一段交通流量视频证明。" />
+      <div className="stage-content vision-stage">
+        <article className="panel activity-monitor-panel">
+          <PanelHeader icon={Route} title="高德路况监测 · 完整交付" action={<span className="status-chip scenario">原始交付 + Derived</span>} />
+          <AmapDeliveryTable />
+          <div className="activity-monitor-metrics expert-only" aria-label="视频观测指标">{observationMetrics.map((metric) => <div key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.unit}</small></div>)}<small className="observation-quality-note">抽帧会降低轨迹连续性；20 fps · 转弯/停留更稳（推荐）。</small></div>
+          <div className="activity-evidence-card activity-video-evidence-card amap-video-proof">
+            <div className="activity-evidence-toolbar"><div><strong>交通流量视频 · 辅助证明材料</strong><small>使用操作者指定的两段现场视频</small></div><span className="evidence-count">{activityVideos.length ? `${activityVideos.length} 段` : '未找到'}</span></div>
+            {activityVideos.length ? <div className="activity-video-proof-grid">{activityVideos.map((video) => <figure key={video.id} className="activity-video-proof-item"><video className="activity-evidence-video" src={`${video.url}?v=20261019`} controls preload="metadata" aria-label={`交通流量辅助视频：${video.name}`} /><figcaption>{video.name}</figcaption></figure>)}</div> : <div className="activity-video-empty">项目中未找到已登记的交通流量视频。</div>}
+            <div className="activity-table-analysis"><span>VIDEO ANALYSIS · TWO OPERATOR-SUPPLIED CLIPS</span><strong>两段视频显示同一处建筑前场的步行、非机动车与车辆交互</strong><div className="amap-analysis-details"><p><b>视频01：</b>73.33 秒，1280×720，黄昏高位视角。画面覆盖建筑入口前道路、弯曲人行路径和中央绿化岛；行人沿弯道和入口方向连续通过，夹有自行车/电动车，机动车出现但没有形成持续排队。</p><p><b>视频02：</b>305.33 秒，960×544，同一场景的更长观察段。可见行人分批经过入口及弯道节点，非机动车与步行流在路口附近交会；道路上出现小汽车经过，车辆流与人行流存在短时交叉，但画面未显示长时间堵塞。</p><ul><li><b>空间关系：</b>建筑入口、弯道、绿化岛和道路边缘共同形成汇流点；绿化岛分隔了部分路径，同时把行人和非机动车导向同一转折处。</li><li><b>可用于汇报：</b>两段视频可以佐证“这里存在步行与非机动车混行、入口节点会短时聚集”的空间判断。</li><li><b>使用边界：</b>视频时长和视角不足以推导小时流量、14 条高德采样点的对应关系或拥堵率；页面不把视频中的可见人数换算成统计表数字。</li></ul></div></div>
+          </div>
+        </article>
       </div>
     </section>
-  </div>;
+  );
 }
 
-function ProjectServiceState({ state, cachedCount, onRetry }) {
-  const loading = state.status === 'loading';
-  return <section className={`project-service-state ${state.status}`} aria-live="polite">
-    {loading ? <RefreshCw size={30} /> : <AlertTriangle size={30} />}
-    <span className="expert-only">PROJECT LIBRARY / CONNECTION</span>
-    <h1>{loading ? '正在连接项目库' : '项目服务暂时离线'}</h1>
-    <p>{loading ? '正在读取项目卷宗和工作区资产。' : `项目数据没有被删除${cachedCount ? `，已保留 ${cachedCount} 个项目的上次同步清单` : ''}。系统每 5 秒自动重连，服务恢复后会重新载入真实项目数据。`}</p>
-    {!loading && <button type="button" className="secondary-button" onClick={onRetry}><RefreshCw size={14} />立即重试</button>}
+const AMAP_STATES = [
+  { key: 'smooth', label: '畅通', color: '#4ade80' },
+  { key: 'slow', label: '缓行', color: '#eab308' },
+  { key: 'jam', label: '拥堵', color: '#f59e0b' },
+  { key: 'severe', label: '严重拥堵', color: '#ef4444' }
+];
+
+function AmapRhythmPanel() {
+  const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [roadId, setRoadId] = useState('road_2');
+  const [date, setDate] = useState('2026-09-30');
+  const [allPeriod, setAllPeriod] = useState(false);
+  const [activeHour, setActiveHour] = useState(null);
+  const [hourSel, setHourSel] = useState(null);
+  useEffect(() => {
+    if (Number.isFinite(hourSel)) window.dispatchEvent(new CustomEvent('amap-hour-sync', { detail: { hour: hourSel, source: 'rhythm' } }));
+  }, [hourSel]);
+  useEffect(() => {
+    const onHour = (e) => { if (e.detail?.source === 'twin' && Number.isFinite(e.detail?.hour)) setHourSel(e.detail.hour); };
+    window.addEventListener('amap-hour-sync', onHour);
+    return () => window.removeEventListener('amap-hour-sync', onHour);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/data/amap-traffic-matrix.json').then((r) => r.json()).then((json) => { if (alive) setData(json); }).catch(() => { if (alive) setLoadError(true); });
+    return () => { alive = false; };
+  }, []);
+
+  const head = <div className="amap-rhythm-head"><div><span className="amap-rhythm-kicker">01 / 24H FLOW RHYTHM</span><h2>全天流量节奏 <em>高德实测 · OBSERVED</em></h2></div></div>;
+  if (loadError) return <section className="amap-rhythm-panel" aria-label="全天流量节奏">{head}<p className="amap-rhythm-empty">实测数据矩阵加载失败，请刷新重试</p></section>;
+  if (!data) return <section className="amap-rhythm-panel" aria-label="全天流量节奏">{head}<p className="amap-rhythm-empty">正在读取高德实测矩阵…</p></section>;
+
+  const roads = Object.keys(data.roadNames).filter((rid) => rid).sort((a, b) => parseInt(a.slice(5), 10) - parseInt(b.slice(5), 10)).filter((rid) => parseInt(rid.slice(5), 10) <= 8);
+  const cellFor = (rid, d, h) => data.matrix.find((m) => m.road === rid && m.date === d && m.hour === h);
+  const aggFor = (rid, h) => {
+    const acc = { total: 0, '畅通': 0, '缓行': 0, '拥堵': 0, '严重拥堵': 0, '无路况颜色': 0 };
+    data.matrix.filter((m) => m.road === rid && m.hour === h).forEach((m) => {
+      acc.total += m.total;
+      Object.keys(acc).forEach((s) => { if (s !== 'total' && m.counts[s]) acc[s] += m.counts[s]; });
+    });
+    return acc;
+  };
+
+  const bars = Array.from({ length: 24 }, (_, h) => {
+    const cell = allPeriod ? aggFor(roadId, h) : (cellFor(roadId, date, h) || { total: 0, counts: {} });
+    const total = cell.total || 0;
+    const c = cell.counts || cell;
+    const valid = ((c['畅通'] || 0) + (c['缓行'] || 0) + (c['拥堵'] || 0) + (c['严重拥堵'] || 0)) || 1;
+    const pct = {
+      '畅通': 100 * (c['畅通'] || 0) / valid,
+      '缓行': 100 * (c['缓行'] || 0) / valid,
+      '拥堵': 100 * (c['拥堵'] || 0) / valid,
+      '严重拥堵': 100 * (c['严重拥堵'] || 0) / valid
+    };
+    const nonSmooth = (c['缓行'] || 0) + (c['拥堵'] || 0) + (c['严重拥堵'] || 0);
+    const ratio = total ? nonSmooth / total : 0;
+    return { hour: h, total, nonSmooth, ratio, pct, counts: c };
+  });
+
+  const grand = bars.reduce((acc, b) => ({ total: acc.total + b.total, nonSmooth: acc.nonSmooth + b.nonSmooth }), { total: 0, nonSmooth: 0 });
+  const peak = bars.reduce((best, b) => (b.nonSmooth > best.nonSmooth ? b : best), bars[0]);
+  const smoothRate = grand.total ? 100 * (grand.total - grand.nonSmooth) / grand.total : 100;
+  const roadRatio = (rid) => {
+    let t = 0; let ns = 0;
+    for (let h = 0; h < 24; h += 1) {
+      const cell = allPeriod ? aggFor(rid, h) : cellFor(rid, date, h);
+      if (!cell) continue;
+      const c = cell.counts || cell;
+      t += cell.total || 0;
+      ns += (c['缓行'] || 0) + (c['拥堵'] || 0) + (c['严重拥堵'] || 0);
+    }
+    return t ? ns / t : 0;
+  };
+  const ranking = [...roads].sort((a, b) => roadRatio(b) - roadRatio(a));
+  const rank = ranking.indexOf(roadId) + 1;
+  const viewHour = hourSel === null ? peak.hour : hourSel;
+  const viewBar = bars[viewHour] || bars[peak.hour];
+  const peakLabel = peak.nonSmooth > 0 ? `${String(peak.hour).padStart(2, '0')}:00 前后` : '全天畅通';
+  const roadLabel = data.roadNames[roadId] || roadId;
+  const dateLabel = allPeriod ? '全期（国庆前后 6 天）' : (AMAP_DAY_LABEL[date] || date);
+
+  const selectRoad = (rid) => {
+    setRoadId(rid);
+    try { window.dispatchEvent(new CustomEvent('amap-road-selected', { detail: { roadId: rid, roadName: data.roadNames[rid] } })); } catch (err) { /* linkage hook */ }
+  };
+
+  return <section className="amap-rhythm-panel" aria-label="全天流量节奏">
+    <div className="amap-rhythm-head">
+      <div><span className="amap-rhythm-kicker">01 / 24H FLOW RHYTHM</span><h2>全天流量节奏 <em>高德实测 · OBSERVED</em></h2></div>
+      <div className="amap-rhythm-switchers">
+        <label>道路
+          <select value={roadId} onChange={(e) => selectRoad(e.target.value)}>
+            {roads.map((rid) => <option key={rid} value={rid}>{data.roadNames[rid]}</option>)}
+          </select>
+        </label>
+        <label>日期
+          <select value={allPeriod ? 'all' : date} onChange={(e) => { if (e.target.value === 'all') setAllPeriod(true); else { setAllPeriod(false); setDate(e.target.value); } }}>
+            <option value="all">全期合并</option>
+            {data.dates.map((d) => <option key={d} value={d}>{AMAP_DAY_LABEL[d] || d}</option>)}
+          </select>
+        </label>
+      </div>
+    </div>
+    <div className="amap-rhythm-chart">
+      {bars.map((b) => (
+        <button type="button" key={b.hour} className={`amap-rhythm-bar ${viewHour === b.hour ? 'active' : ''}`} onClick={() => { setHourSel(b.hour); setActiveHour(b.hour); }} title={`${String(b.hour).padStart(2, '0')}:00 · 非畅通 ${b.nonSmooth} 次 / ${b.total} 采样`}>
+          <b className="amap-rhythm-count">{b.nonSmooth > 0 ? b.nonSmooth : ''}</b>
+          <span className="amap-rhythm-stack">
+            {['严重拥堵', '拥堵', '缓行', '畅通'].map((s) => b.pct[s] > 0.001 ? <i key={s} style={{ height: `${b.pct[s]}%`, background: AMAP_STATES.find((x) => x.label === s).color }} /> : null)}
+          </span>
+          <small>{b.hour % 6 === 0 ? String(b.hour).padStart(2, '0') : ''}</small>
+        </button>
+      ))}
+    </div>
+    <div className="amap-rhythm-slider">
+      <span>TIME OF DAY</span>
+      <input type="range" min="0" max="23" value={viewHour} onChange={(e) => { const h = Number(e.target.value); setHourSel(h); setActiveHour(h); }} />
+      <strong>{String(viewHour).padStart(2, '0')}:00</strong>
+      <em>{['畅通', '缓行', '拥堵', '严重拥堵'].map((s) => <b key={s}><i style={{ background: AMAP_STATES.find((x) => x.label === s).color }} />{s} {viewBar.pct[s].toFixed(2)}%</b>)}</em>
+    </div>
+    <div className="amap-rhythm-readout">
+      <div><span>{roadLabel} · {dateLabel}</span><strong>{smoothRate.toFixed(2)}%</strong><small>畅通率</small></div>
+      <div><span>非畅通样本</span><strong>{grand.nonSmooth}</strong><small>/ {grand.total} 轮次</small></div>
+      <div><span>8 路敏感度排名</span><strong>No.{rank}</strong><small>按非畅通占比</small></div>
+      <div><span>高峰时段</span><strong>{peakLabel}</strong><small>非畅通最集中</small></div>
+    </div>
+    <div className="amap-rhythm-legend">
+      {AMAP_STATES.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}
+      <small>每根柱 = 该小时四态构成（满高 100%）· 柱顶数字 = 该小时非畅通采样次数 · 拖动 TIME OF DAY 查看单小时 · 高德路况颜色≠人流数</small>
+    </div>
+    <footer className="amap-rhythm-source">高德路况监测 · 国庆假期前后各 3 天（节前工作日3天 + 假期3天 · 共 6 天） · 8 路 666,632 样本 · 约 5 秒/轮 · OBSERVED 实测 · 数据矩阵 /data/amap-traffic-matrix.json</footer>
   </section>;
 }
 
-function ProjectServiceBanner({ state, onRetry }) {
-  return <div className="project-service-banner" role="status"><AlertTriangle size={15} /><span><strong>项目服务暂时离线，已保留当前工作区</strong><small>{state.message || '正在自动重试；三维场景与已载入资料仍可查看。'}</small></span><button type="button" className="text-button" onClick={onRetry}><RefreshCw size={13} />立即重试</button></div>;
+const RETROFIT_WIPES = [
+  {
+    id: 'fence',
+    title: '① 连续围栏 → 地面小门',
+    before: '/generated/traffic-comparisons/fence-before-split.png',
+    after: '/generated/traffic-comparisons/fence-after-split.png',
+    site: '现场功能：连续栅栏切断了与主楼的直接联系，行人被迫绕行；狭窄白色小门降低行走舒适度，非机动车无法通过。',
+    analysis: '分析口径：高德路况数据不能识别栅栏与门禁，本处按「空间联系中断、路径不连续」分析，不能用「高德畅通」替代现场通行评价。'
+  },
+  {
+    id: 'serpentine',
+    title: '② 蛇形栏杆 → 直达通行',
+    before: '/generated/traffic-comparisons/serpentine-barrier-before-split.png',
+    after: '/generated/traffic-comparisons/serpentine-barrier-after-split.png',
+    site: '现场功能：蛇形折返栏杆使路径连续性受阻，行人需多次折返才能到达主楼入口。',
+    analysis: '分析口径：高德路况颜色不能测量步行舒适度与绕行阻力，改造收益以空间关系表达，施工尺寸需现场复核。'
+  },
+  {
+    id: 'mixed',
+    title: '③ 混行小路 → 人车分流',
+    before: '/generated/traffic-comparisons/mixed-lane-before-split.png',
+    after: '/generated/traffic-comparisons/mixed-lane-after-split.png',
+    site: '现场功能：窄路上摩托车、自行车与行人混行，晚高峰易发生速度差、会车与交叉冲突。',
+    analysis: '分析口径：高德监测的晚高峰状态变化（小路13、9~11）与现场判断方向一致；因缺少正式编号对应关系，仅作周边交通压力辅助证据。'
+  }
+];
+
+function WipeCard({ item }) {
+  const [pos, setPos] = useState(50);
+  const frameRef = useRef(null);
+  const beforeRef = useRef(null);
+  const dividerRef = useRef(null);
+  const beforeTagRef = useRef(null);
+  const afterTagRef = useRef(null);
+  const dragging = useRef(false);
+  const rectRef = useRef(null);
+  const rafRef = useRef(0);
+  const lastP = useRef(50);
+  // 拖动热路径：零布局读取、零 React 渲染，直接写 DOM，rAF 合帧
+  const schedule = (clientX) => {
+    const rect = rectRef.current;
+    if (!rect) return;
+    const p = Math.max(4, Math.min(96, 100 * (clientX - rect.left) / rect.width));
+    lastP.current = p;
+    if (beforeRef.current) beforeRef.current.style.clipPath = `inset(0 ${100 - p}% 0 0)`;
+    if (dividerRef.current) dividerRef.current.style.left = `${p}%`;
+    if (beforeTagRef.current) beforeTagRef.current.style.opacity = p < 26 ? 0 : 1;
+    if (afterTagRef.current) afterTagRef.current.style.opacity = p > 58 ? 0 : 1;
+  };
+  const onDown = (e) => {
+    dragging.current = true;
+    rectRef.current = frameRef.current.getBoundingClientRect();
+    schedule(e.clientX);
+    setPos(lastP.current);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+  };
+  const onMove = (e) => {
+    if (!dragging.current) return;
+    const x = e.clientX;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => { rafRef.current = 0; schedule(x); });
+  };
+  const onUp = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
+    setPos(lastP.current);
+  };
+  return <article className="wipe-card">
+    <div className="wipe-frame" ref={frameRef}
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerLeave={onUp}>
+      <img className="wipe-after" src={item.after} alt={`${item.title} 改造后示意`} draggable={false} />
+      <img className="wipe-before" ref={beforeRef} src={item.before} alt={`${item.title} 现状实拍`} style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }} draggable={false} />
+      <span className="wipe-divider" ref={dividerRef} style={{ left: `${pos}%` }}><i /></span>
+      <span className="wipe-tag before-tag" ref={beforeTagRef} style={{ opacity: pos < 26 ? 0 : 1 }}>改造前 · 实拍</span>
+      <span className="wipe-tag after-tag" ref={afterTagRef} style={{ opacity: pos > 58 ? 0 : 1 }}>改造后 · Generated 概念示意</span>
+    </div>
+    <div className="wipe-copy">
+      <h3>{item.title}</h3>
+      <p className="wipe-site">{item.site}</p>
+      <p className="wipe-analysis">{item.analysis}</p>
+    </div>
+  </article>;
 }
 
-function StageHeading({ eyebrow, title, description }) {
-  return <div className="stage-heading"><div><span className="expert-only">{eyebrow}</span><h1>{title.split(/\\n|\n/).map((line, i) => <React.Fragment key={line}>{line}{i === 0 && <br />}</React.Fragment>)}</h1></div><p>{description}</p></div>;
+function RetrofitWipeCompare() {
+  return <section className="retrofit-wipe-section" aria-label="三处痛点改造前后对比">
+    <div className="retrofit-wipe-head">
+      <div><span className="amap-rhythm-kicker">02 / RETROFIT BEFORE · AFTER</span><h2>三处痛点 · 改造前后</h2></div>
+      <em className="wipe-badge">BEFORE = OBSERVED 实拍 · AFTER = GENERATED · SCENARIO</em>
+    </div>
+    <div className="wipe-grid">
+      {RETROFIT_WIPES.map((item) => <WipeCard key={item.id} item={item} />)}
+    </div>
+    <blockquote className="wipe-quote">现场三条小道的主要问题不是整体机动车拥堵，而是栅栏和狭窄门洞造成的路径中断、绕行和混合交通冲突。高德监测显示研究区周边部分道路在工作日晚高峰出现较明显的状态变化，其中内部采样点小路13及小路9～11最敏感。由于缺少红框小道与内部采样编号的精确对应关系，高德数据作为周边交通压力的辅助证据，不替代对三条小道本身的人流、非机动车流量和门洞通行能力测量。<cite>—— 三条红框小道专项分析补充 · §8 可用于汇报的表述</cite></blockquote>
+  </section>;
 }
-class WorkspaceErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error(`${this.props.label || '工作区'}渲染失败`, error, info); }
-  render() {
-    if (!this.state.error) return this.props.children;
-    return <section className="workspace-render-error" role="alert"><strong>{this.props.label || '工作区'}暂时无法显示</strong><span>{this.state.error.message || '页面组件发生运行时错误'}</span><button type="button" className="secondary-button" onClick={() => this.setState({ error: null })}>重试</button></section>;
-  }
-}
-function StageFooter({ left, actions }) { return <footer className="stage-footer"><span><i />{left}</span><div>{actions}</div></footer>; }
-function PanelHeader({ icon: Icon, title, action }) { return <header className="panel-header"><div><Icon size={16} /><h2>{title}</h2></div>{action}</header>; }
-function RuntimeStatusIcon({ state, ready }) {
-  const resolved = state || (ready ? 'ready' : 'blocked');
-  const icon = resolved === 'ready' ? <Check size={12} /> : resolved === 'external_required' ? <Radio size={12} /> : resolved === 'degraded' ? <AlertTriangle size={12} /> : <X size={12} />;
-  return <span className={`runtime-icon ${resolved === 'external_required' ? 'external' : resolved}`}>{icon}</span>;
-}
-function RuntimeLine({ label, ready, state, detail }) { return <div className="runtime-line"><RuntimeStatusIcon {...{ state, ready }} /><strong>{label}</strong><small>{detail}</small></div>; }
-function RuntimeConsole({ health, busy, expertMode, onExpertModeChange, onRefresh, onClose }) {
-  const runtimes = health?.runtimes || {};
-  const runtimeCapabilities = health?.runtimeCapabilities || {};
-  const llm = health?.llm || {};
-  const groups = [
-    {
-      title: '推理接口',
-      items: [
-        { label: 'API 密钥配置', ready: llm.configured, detail: llm.configured ? '仅确认服务端存在，不显示内容' : '未配置' },
-        { label: '精确模型 ID', ready: Boolean(llm.model), detail: llm.model || '未配置' },
-        { label: '主节点', ready: Boolean(llm.primaryBaseUrl || llm.baseUrl), detail: llm.primaryBaseUrl || llm.baseUrl || '未配置' },
-        { label: '香港直连节点', ready: Boolean(llm.directBaseUrl), detail: llm.directBaseUrl || '未配置' }
-      ]
-    },
-    {
-      title: '视觉与语义',
-      items: [
-        { label: 'YOLOX-s ONNX', ready: runtimes.yolo, detail: runtimes.yolo ? '模型权重可读' : '模型路径不可用' },
-        { label: 'FFmpeg / FFprobe', ready: runtimes.ffmpeg && runtimes.ffprobe, detail: runtimes.ffmpeg && runtimes.ffprobe ? '解码、探测与编码可用' : '视频工具链不完整' },
-        { label: runtimes.groundingDino?.label || 'Grounding DINO', ready: runtimes.groundingDino?.available, detail: runtimes.groundingDino?.model || runtimes.groundingDino?.note || '未配置真实模型' },
-        { label: runtimes.sam2?.label || 'SAM 2', ready: runtimes.sam2?.available, detail: runtimes.sam2?.model || runtimes.sam2?.note || '未配置真实模型' }
-      ]
-    },
-    {
-      title: '三维重建与发布',
-      items: [
-        { label: 'OpenSKP', ready: runtimes.skpConverter, detail: runtimes.skpConverter ? 'SKP 主体模型可直接转换为 GLB' : 'SKP 解析器不可用' },
-        { label: 'DWG Reader', ready: runtimes.dwgReader, detail: runtimes.dwgReader ? 'DWG 平面可转换为 GLB 与 GeoJSON' : 'DWG 解析器不可用' },
-        { label: 'Blender Worker', ready: runtimes.blender, state: runtimeCapabilities.blender?.state, detail: runtimeCapabilities.blender?.detail || 'CAD 语义 GLB 可继续使用' },
-        { label: 'COLMAP / PyCOLMAP', ready: runtimes.colmap, state: runtimeCapabilities.colmap?.state, detail: runtimeCapabilities.colmap?.detail || (runtimes.colmap ? '摄影测量可用' : '无法启动摄影测量') },
-        { label: 'Nerfstudio / gsplat', ready: runtimes.nerfstudio, state: runtimeCapabilities.nerfstudio?.state, detail: runtimeCapabilities.nerfstudio?.detail || '可选增强；自动降级为 COLMAP 点云' },
-        { label: 'Nerfstudio 导出', ready: runtimes.nsExport, state: runtimeCapabilities.nsExport?.state, detail: runtimeCapabilities.nsExport?.detail || '可选增强；仅影响 Gaussian 导出' },
-        { label: 'Niantic SPZ', ready: runtimes.spz, state: runtimeCapabilities.spz?.state, detail: runtimeCapabilities.spz?.detail || '可选增强；当前使用 GLB / PLY' },
-        { label: 'NVIDIA GPU', ready: runtimes.gpu?.available, state: runtimeCapabilities.gpu?.state, detail: runtimeCapabilities.gpu?.detail || '需要远程 CUDA Worker' }
-      ]
-    }
+
+function TrafficOnlyWorkspace({ project, transportPlan }) {
+  const [selectedPlan, setSelectedPlan] = useState('P-BALANCED');
+  const [selectedHour, setSelectedHour] = useState(8);
+  const [showAfter, setShowAfter] = useState(true);
+  const [flowLayer, setFlowLayer] = useState('baseline');
+  const [cockpitView, setCockpitView] = useState('overview');
+  const [cockpitPaused, setCockpitPaused] = useState(false);
+  const [flowSpeed, setFlowSpeed] = useState(1);
+  const [autoTour, setAutoTour] = useState(false);
+  const [eventStage, setEventStage] = useState(0);
+  const [simMinutes, setSimMinutes] = useState(8 * 60 + 30);
+  const [eventLog, setEventLog] = useState([
+    { time: '08:30', level: 'info', text: '场景上线 · 两条小路开始流量模拟' },
+    { time: '08:30', level: 'good', text: '西门与南侧路段已绑定独立路线' }
+  ]);
+  const [hoveredFacility, setHoveredFacility] = useState(null);
+  const [kpiJitter, setKpiJitter] = useState(0);
+  const sparklineRef = useRef(null);
+  const eventTimersRef = useRef([]);
+  const simulation = transportPlan?.lastSimulation;
+  const flowFor = (id, fallback) => Number(simulation?.roadResults?.find((item) => item.roadId === id)?.flow?.pedestrians ?? fallback);
+  const westFlow = flowFor('west-gate-walkway', 132);
+  const southFlow = flowFor('south-service-lane', 86);
+  const gateFlow = 60;
+  const multipliers = operationProfiles.office_weekday.multipliers;
+  const spectrum = Array.from({ length: 24 }, (_, hour) => ({ hour, west: westFlow * multipliers[hour], south: southFlow * multipliers[hour], gate: gateFlow * multipliers[hour] }));
+  const selectedSpectrum = spectrum[selectedHour] || spectrum[8];
+  const peakSpectrum = spectrum.reduce((best, point) => (point.west + point.south > best.west + best.south ? point : best), spectrum[0]);
+  const cityBlocks = Array.from({ length: 34 }, (_, index) => ({ x: 110 + (index % 9) * 76 + ((index * 17) % 11), y: 118 + Math.floor(index / 9) * 62 + ((index * 13) % 15), w: 35 + (index % 3) * 8, h: 24 + (index % 5) * 9 }));
+  const maxSpectrum = Math.max(...spectrum.map((point) => Math.max(point.west, point.south, point.gate)), 1);
+  const cockpitLayers = [
+    { id: 'baseline', name: '现状流', metric: '260 人/时', color: '#67e8f9', count: 260 },
+    { id: 'morning', name: '早高峰', metric: '420 人/时', color: '#fb923c', count: 420 },
+    { id: 'evening', name: '晚高峰', metric: '300 人/时', color: '#fbbf24', count: 300 },
+    { id: 'P-SAFE', name: 'P-SAFE', metric: '分流 +60', color: '#4ade80', count: 320 },
+    { id: 'P-EFFICIENCY', name: 'P-EFFICIENCY', metric: '排队 -43%', color: '#a78bfa', count: 270 },
+    { id: 'P-BALANCED', name: 'P-BALANCED', metric: '热力稳定', color: '#38bdf8', count: 300 }
   ];
-  const counts = health?.counts || {};
+  const activeCockpitLayer = cockpitLayers.find((layer) => layer.id === flowLayer) || cockpitLayers[0];
+  const eventBoost = eventStage === 1 ? 1.18 : eventStage === 2 ? 1.04 : eventStage === 3 ? 0.68 : eventStage >= 4 ? 0.72 : 1;
+  const activeAgentCount = Math.round(activeCockpitLayer.count * eventBoost);
+  const liveAgentCount = eventStage === 1 ? activeAgentCount : Math.max(0, Math.round(activeAgentCount * (1 + kpiJitter)));
+  const congestionIndex = Math.min(100, Math.round((activeAgentCount / 4.7) * (eventStage === 1 ? 1 : 1 + kpiJitter)));
+  const congestionBand = congestionIndex >= 82 ? '饱和' : congestionIndex >= 62 ? '挤' : congestionIndex >= 38 ? '缓' : '畅';
+  const congestionColor = congestionIndex >= 82 ? '#ef4444' : congestionIndex >= 62 ? '#f97316' : congestionIndex >= 38 ? '#facc15' : '#4ade80';
+  const formatSimTime = (minutes) => `${String(Math.floor(minutes / 60) % 24).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  const pushEvent = (level, text, minutes = simMinutes) => {
+    setEventLog((current) => [{ time: formatSimTime(minutes), level, text }, ...current].slice(0, 8));
+  };
+  const startMorningPeak = () => {
+    eventTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    eventTimersRef.current = [];
+    setFlowLayer('morning');
+    setCockpitView('focus');
+    setCockpitPaused(false);
+    setSimMinutes(8 * 60 + 30);
+    setEventStage(1);
+    pushEvent('crit', '双通道流量达峰值 · 拥挤指数转红', 8 * 60 + 30);
+    eventTimersRef.current.push(window.setTimeout(() => {
+      setEventStage(2);
+      setSimMinutes(8 * 60 + 34);
+      pushEvent('good', '启用地面小门分流 · 0 → +60 人/时', 8 * 60 + 34);
+    }, 4000));
+    eventTimersRef.current.push(window.setTimeout(() => {
+      setEventStage(3);
+      setSimMinutes(8 * 60 + 41);
+      pushEvent('warn', '主楼入口拥挤回落 · 橙 → 黄', 8 * 60 + 41);
+    }, 11000));
+    eventTimersRef.current.push(window.setTimeout(() => {
+      setEventStage(4);
+      setSimMinutes(8 * 60 + 52);
+      pushEvent('good', '拥挤指数回到黄区 · 事件关闭', 8 * 60 + 52);
+    }, 22000));
+  };
+  useEffect(() => () => eventTimersRef.current.forEach((timer) => window.clearTimeout(timer)), []);
+  useEffect(() => {
+    if (cockpitPaused) return undefined;
+    const timer = window.setInterval(() => setSimMinutes((current) => (current + Math.max(1, Math.round(flowSpeed * 1.5))) % (24 * 60)), 1000);
+    return () => window.clearInterval(timer);
+  }, [cockpitPaused, flowSpeed]);
+  useEffect(() => {
+    if (!autoTour) return undefined;
+    const order = ['baseline', 'morning', 'evening', 'P-SAFE'];
+    const timer = window.setInterval(() => setFlowLayer((current) => order[(order.indexOf(current) + 1) % order.length]), 9000);
+    return () => window.clearInterval(timer);
+  }, [autoTour]);
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+      const key = event.key.toLowerCase();
+      if (key === 'o') setCockpitView('overview');
+      if (key === 'x') setCockpitView('xray');
+      if (key === 'd') setCockpitView('daylight');
+      if (key === ' ') { event.preventDefault(); setCockpitPaused((value) => !value); }
+      if (/^[1-4]$/.test(key)) setFlowLayer(['baseline', 'morning', 'evening', 'P-SAFE'][Number(key) - 1]);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+  useEffect(() => {
+    const canvas = sparklineRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = Math.max(240, canvas.clientWidth * 2);
+    const height = canvas.height = 120;
+    ctx.clearRect(0, 0, width, height);
+    ctx.strokeStyle = 'rgba(103,232,249,.13)';
+    ctx.lineWidth = 1;
+    for (let row = 1; row < 4; row += 1) { ctx.beginPath(); ctx.moveTo(0, row * height / 4); ctx.lineTo(width, row * height / 4); ctx.stroke(); }
+    const points = Array.from({ length: 30 }, (_, index) => Math.max(10, Math.min(98, congestionIndex + Math.sin(index * .55) * 7 + (eventStage === 1 ? index * .9 : 0))));
+    ctx.beginPath();
+    points.forEach((point, index) => { const x = index * (width - 12) / (points.length - 1) + 6; const y = height - point / 100 * (height - 14) - 7; index ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.strokeStyle = '#67e8f9'; ctx.shadowColor = '#67e8f9'; ctx.shadowBlur = 12; ctx.lineWidth = 3; ctx.stroke(); ctx.shadowBlur = 0;
+  }, [congestionIndex, eventStage]);
+  const planCopy = {
+    'P-SAFE': { label: '安全优先', detail: '单个地面小门 + 车辆隔离', accent: 'safe' },
+    'P-EFFICIENCY': { label: '效率优先', detail: '双开口分流 + 排队监测', accent: 'efficiency' },
+    'P-BALANCED': { label: '综合平衡', detail: '单开口 + 小路热力监测', accent: 'balanced' }
+  }[selectedPlan];
+  const leaveTrafficView = () => { const url = new URL(window.location.href); url.searchParams.delete('view'); url.searchParams.delete('traffic'); window.location.href = url.toString(); };
+  return <section className="traffic-only-workspace" aria-label="流量驾驶舱">
+    <header className="traffic-only-hero"><div><span className="traffic-only-eyebrow">FLOW INTELLIGENCE / 01</span><h1>城市小路流量驾驶舱</h1><p>只看流量、路径和改造前后变化。两条小路独立计算，新增小门单列展示。</p></div><div className="traffic-only-hero-actions"><span className="traffic-only-live"><i /> TRAFFIC SIGNAL ONLINE</span><button type="button" onClick={leaveTrafficView}>返回完整工作流</button></div></header>
+    <AmapRhythmPanel />
+    <section className="flow-city-cockpit" aria-label="FLOW CITY TWIN 人流量驾驶舱">
+      <header className="flow-city-cockpit-topbar">
+        <div className="flow-city-brand"><span className="flow-city-mark">FC</span><div><strong>FLOW CITY TWIN</strong><small>某集团园区 · 人流通勤孪生 · SIMULATED</small></div></div>
+        <div className="flow-city-simtime"><span>SIM TIME</span><strong>{formatSimTime(simMinutes)}</strong><i className={cockpitPaused ? 'paused' : ''} /></div>
+        <nav className="flow-city-view-switch" aria-label="驾驶舱视图">
+          {[['overview', 'Overview'], ['auto', 'Auto tour'], ['xray', 'X-ray ground'], ['daylight', 'Daylight'], ['labels', 'Labels']].map(([id, label]) => <button type="button" key={id} className={(id === cockpitView || (id === 'auto' && autoTour)) ? 'active' : ''} onClick={() => id === 'auto' ? setAutoTour((value) => !value) : setCockpitView(id)}>{label}</button>)}
+        </nav>
+      </header>
+      <div className="flow-city-cockpit-body">
+        <aside className="flow-city-layer-panel">
+          <div className="flow-city-panel-kicker">FLOW LAYERS <small>06 SIGNALS</small></div>
+          {cockpitLayers.map((layer, index) => <button type="button" key={layer.id} className={`flow-city-layer-row ${flowLayer === layer.id ? 'active' : ''}`} style={{ '--layer-color': layer.color }} onClick={() => { setFlowLayer(layer.id); setCockpitView('focus'); }}><span className="flow-city-layer-swatch">{String(index + 1).padStart(2, '0')}</span><span><strong>{layer.name}</strong><small>{layer.metric}</small></span><i className="flow-city-layer-toggle" /></button>)}
+          <div className="flow-city-layer-foot"><span>ALL READINGS</span><strong>SIMULATED</strong><small>路线来源：transport-plan.v1<br />两条小路独立计算</small></div>
+        </aside>
+        <div className={`flow-city-stage ${cockpitView === 'xray' ? 'is-xray' : ''} ${cockpitView === 'daylight' ? 'is-daylight' : ''}`}>
+          <svg viewBox="0 0 920 560" role="img" aria-label="双通道人流孪生场景"><defs><pattern id="flowCityGrid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#1b3b50" strokeWidth="1" opacity=".58" /></pattern><filter id="flowCityGlow"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter><linearGradient id="flowCityArcA" x1="0" x2="1"><stop offset="0" stopColor="#164252" /><stop offset=".5" stopColor="#67e8f9" /><stop offset="1" stopColor="#d5fbff" /></linearGradient><linearGradient id="flowCityArcB" x1="0" x2="1"><stop offset="0" stopColor="#60391b" /><stop offset=".55" stopColor="#fb923c" /><stop offset="1" stopColor="#ffd29c" /></linearGradient></defs><rect width="920" height="560" fill={cockpitView === 'daylight' ? '#132633' : '#020912'} /><rect width="920" height="560" fill="url(#flowCityGrid)" opacity={cockpitView === 'xray' ? .94 : .55} /><g className="flow-city-ghost-buildings"><rect x="298" y="226" width="124" height="82" className="flow-city-main-ghost" /><path d="M310 226h100" className="flow-city-main-ghost-top" />{cityBlocks.map((block, index) => <g key={index} style={{ opacity: .42 + (index % 5) * .05 }}><rect x={block.x} y={block.y} width={block.w} height={block.h} /><path d={`M${block.x + 7} ${block.y + 7}h${Math.max(8, block.w - 14)}M${block.x + 7} ${block.y + 14}h${Math.max(8, block.w - 14)}`} /></g>)}</g><path id="flowArcA" className="flow-city-route cyan" d="M34 142 C155 142 210 211 328 197 S460 132 580 146 S676 205 748 258" /><path id="flowArcB" className="flow-city-route amber" d="M40 450 C168 450 176 358 292 375 S430 444 560 400 S710 314 858 350" /><path className="flow-city-route gate" d="M580 146 C650 155 690 205 748 258" style={{ opacity: eventStage >= 2 || showAfter ? 1 : .18 }} />{Array.from({ length: 14 }, (_, index) => <circle key={`a-${index}`} className="flow-city-particle cyan" r={index % 4 === 0 ? 4 : 2.5} style={{ '--particle-delay': `${index * -.28}s`, '--particle-speed': `${Math.max(.8, 2.3 / flowSpeed)}s` }}><animateMotion dur={`${Math.max(.8, 2.3 / flowSpeed)}s`} begin={`${index * -.28}s`} repeatCount="indefinite" path="M34 142 C155 142 210 211 328 197 S460 132 580 146 S676 205 748 258" /></circle>)}{Array.from({ length: 11 }, (_, index) => <circle key={`b-${index}`} className="flow-city-particle amber" r={index % 3 === 0 ? 4 : 2.5} style={{ '--particle-delay': `${index * -.34}s`, '--particle-speed': `${Math.max(.9, 2.8 / flowSpeed)}s` }}><animateMotion dur={`${Math.max(.9, 2.8 / flowSpeed)}s`} begin={`${index * -.34}s`} repeatCount="indefinite" path="M40 450 C168 450 176 358 292 375 S430 444 560 400 S710 314 858 350" /></circle>)}{['2号口', '4号口', '主楼入口', '地面小门'].map((label, index) => { const points = [[34, 142], [40, 450], [580, 146], [748, 258]][index]; return <g key={label} className="flow-city-facility" onMouseEnter={() => setHoveredFacility(label)} onFocus={() => setHoveredFacility(label)} onClick={() => setCockpitView('focus')} tabIndex="0" role="button"><circle cx={points[0]} cy={points[1]} r="10" className={`flow-city-node ${index === 1 ? 'amber' : index === 3 ? 'gate' : 'cyan'}`} /><circle cx={points[0]} cy={points[1]} r="22" className="flow-city-ring" /><text x={points[0] + 18} y={points[1] + 4}>{label}</text></g>; })}<text x="348" y="270" className="flow-city-building-label">MAIN BUILDING · GHOST GEOMETRY</text><text x="348" y="286" className="flow-city-building-label">L3 PEDESTRIAN SIGNAL FIELD</text></svg>{hoveredFacility && <div className="flow-city-floating-card" style={{ left: hoveredFacility === '4号口' ? '7%' : hoveredFacility === '2号口' ? '7%' : hoveredFacility === '主楼入口' ? '62%' : '79%', top: hoveredFacility === '4号口' ? '70%' : hoveredFacility === '2号口' ? '17%' : hoveredFacility === '主楼入口' ? '15%' : '35%' }} onMouseLeave={() => setHoveredFacility(null)}><strong>{hoveredFacility}</strong><span>通过率 {hoveredFacility === '地面小门' ? (eventStage >= 2 ? 60 : 0) : Math.max(18, Math.round(liveAgentCount * (hoveredFacility === '主楼入口' ? .48 : .34)))} 人/时</span><small>拥挤指数 {Math.min(100, congestionIndex + (hoveredFacility === '主楼入口' ? 8 : 0))} · Simulated</small></div>}<div className="flow-city-stage-readout"><span>{cockpitView === 'xray' ? 'GROUND X-RAY' : cockpitView === 'daylight' ? 'DAYLIGHT / DERIVED' : 'PEDESTRIAN SIGNAL FIELD'}</span><strong>{congestionBand.toUpperCase()}</strong><small>{liveAgentCount} AGENTS · {activeCockpitLayer.name.toUpperCase()} · {congestionIndex}/100</small></div><div className="flow-city-stage-badge">DERIVED LAYER <b>SIMULATED</b></div>
+        </div>
+        <aside className="flow-city-pulse-panel">
+          {cockpitView === 'overview' ? <><span className="flow-city-panel-kicker">CITY PULSE <small>OVERVIEW</small></span><h2>园区人流脉搏</h2><p>把现场两条小路拆成可解释的时段流量，按拥挤度驱动人群移动。</p><div className="flow-city-kpi-list">{[['TOTAL AGENTS', liveAgentCount, '当前模拟人数'], ['CONGESTION INDEX', `${congestionIndex}`, `${congestionBand} · 0–100`], ['WEST WALKWAY', `${Math.round(westFlow * eventBoost)}`, '人 / 小时'], ['SOUTH SERVICE', `${Math.round(southFlow * eventBoost)}`, '人 / 小时'], ['GROUND GATE', eventStage >= 2 || showAfter ? '+60' : '0', '分流增量 / 时'], ['FLOW SPEED', `${flowSpeed.toFixed(1)}×`, '脚本速度']].map(([label, value, note]) => <div className="flow-city-kpi" key={label}><i style={{ background: label === 'CONGESTION INDEX' ? congestionColor : activeCockpitLayer.color }} /><span><small>{label}</small><strong>{value}</strong><em>{note}</em></span></div>)}</div><button type="button" className="flow-city-cta" style={{ '--cta-color': activeCockpitLayer.color }} onClick={startMorningPeak}>SIMULATE MORNING PEAK <span>▶</span></button></> : <><span className="flow-city-panel-kicker">LAYER {String(cockpitLayers.findIndex((layer) => layer.id === flowLayer) + 1).padStart(2, '0')} OF 06 <small>{activeCockpitLayer.name}</small></span><h2>{activeCockpitLayer.name} · 人流剧本</h2><p>拥挤指数由当前模拟人数和时段倍率推导，所有读数均为 Scenario。</p><div className="flow-city-focus-grid"><div><small>当前流量</small><strong>{activeAgentCount}</strong><em>人 / 小时</em></div><div><small>拥挤指数</small><strong style={{ color: congestionColor }}>{congestionIndex}</strong><em>{congestionBand}</em></div><div><small>平均绕行</small><strong>{eventStage >= 2 ? '−18' : '+42'}</strong><em>米 / 人</em></div><div><small>分流增量</small><strong>+{eventStage >= 2 || showAfter ? 60 : 0}</strong><em>人 / 小时</em></div></div><canvas className="flow-city-sparkline" ref={sparklineRef} aria-label="90秒拥挤指数趋势" /><div className="flow-city-focus-points"><span><i style={{ background: congestionColor }} />{eventStage === 0 ? '围栏边界造成入口绕行' : eventStage === 1 ? '双通道同时进入峰值' : '地面小门分流已接管'}</span><span><i style={{ background: activeCockpitLayer.color }} />两条小路保持独立统计</span><span><i style={{ background: '#a78bfa' }} />读数标记为 Simulated</span></div><button type="button" className="flow-city-cta" style={{ '--cta-color': activeCockpitLayer.color }} onClick={startMorningPeak}>SIMULATE MORNING PEAK <span>▶</span></button></>}
+          <div className="flow-city-hover-card"><strong>{hoveredFacility} · SIGNAL</strong><span>通过率 {hoveredFacility === '地面小门' ? (eventStage >= 2 ? 60 : 0) : Math.max(18, Math.round(activeAgentCount * (hoveredFacility === '主楼入口' ? .48 : .34)))} 人/时</span><small>拥挤指数 {Math.min(100, congestionIndex + (hoveredFacility === '主楼入口' ? 8 : 0))} · Simulated</small></div>
+        </aside>
+      </div>
+      <footer className="flow-city-cockpit-footer"><div className="flow-city-speed"><button type="button" onClick={() => setCockpitPaused((value) => !value)}>{cockpitPaused ? '▶' : 'Ⅱ'}</button><span>FLOW SPEED</span><input type="range" min="0.2" max="3" step="0.1" value={flowSpeed} onChange={(event) => setFlowSpeed(Number(event.target.value))} /><strong>{flowSpeed.toFixed(1)}×</strong></div><div className="flow-city-key-hint">1–4 方案 · O 总览 · X 透视 · D 日景 · 空格 暂停 · 拖拽 环视</div><div className="flow-city-event-log" aria-live="polite"><span>EVENT LOG</span>{eventLog.slice(0, 2).map((entry, index) => <div key={`${entry.time}-${index}`}><b>{entry.time}</b><i className={entry.level}>{entry.level}</i><small>{entry.text}</small></div>)}</div></footer>
+    </section>
+    <section className="traffic-twin-screen" aria-label="流量智慧城市孪生画面">
+      <div className="traffic-twin-screenbar"><strong>FLOW CITY TWIN</strong><span>small-path telemetry simulated · {String(selectedHour).padStart(2, '0')}:00</span><div><button type="button" className="active">Overview</button><button type="button">X-ray ground</button><button type="button">Daylight</button><button type="button">Labels</button></div></div>
+      <aside className="traffic-twin-layers"><span>NETWORK LAYER</span><small>只启用一层流量</small><div className="traffic-twin-layer active"><b>01</b><strong>Traffic</strong><small>两条小路 · {westFlow + southFlow}/h</small><i /></div><div className="traffic-twin-layer-note">所有读数均为 Scenario。点击小路节点查看其信号流。</div></aside>
+      <div className="traffic-twin-city"><svg viewBox="0 0 920 560" role="img" aria-label="夜景小路流量城市孪生"><defs><pattern id="cityOpsGrid" width="34" height="34" patternUnits="userSpaceOnUse"><path d="M34 0H0V34" fill="none" stroke="#153b4b" strokeWidth="1" opacity=".58" /></pattern><filter id="cityOpsGlow"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter><linearGradient id="cityNightDeck" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#061724" /><stop offset="1" stopColor="#020a12" /></linearGradient></defs><rect width="920" height="560" fill="url(#cityNightDeck)" /><rect width="920" height="560" fill="url(#cityOpsGrid)" opacity=".74" />{cityBlocks.map((block, index) => <g key={index} className="traffic-city-block"><rect x={block.x} y={block.y} width={block.w} height={block.h} rx="2" /><path d={`M${block.x + 7} ${block.y + 7}h${Math.max(8, block.w - 14)}M${block.x + 7} ${block.y + 14}h${Math.max(8, block.w - 14)}`} /></g>)}<path className="traffic-city-route cyan" d="M28 142C155 142 208 211 328 197s130-62 252-51 123 70 207 112" /><path className="traffic-city-route amber" d="M40 448c132 0 169-80 290-73s113 79 254 57 163-95 292-91" /><path className="traffic-city-route gate" d="M580 146c69 9 98 57 133 112" style={{ opacity: showAfter ? 1 : .14 }} /><path className="traffic-city-dash" d="M286 211c74-19 103-49 165-60" /><circle className="traffic-city-node cyan" cx="28" cy="142" r="9" /><circle className="traffic-city-node amber" cx="40" cy="448" r="9" /><circle className="traffic-city-node gate" cx="713" cy="258" r="12" style={{ opacity: showAfter ? 1 : .2 }} /><circle className="traffic-city-pulse" cx="713" cy="258" r="24" style={{ opacity: showAfter ? 1 : .2 }} /><text x="48" y="120">WEST GATE / {Math.round(selectedSpectrum.west)} H</text><text x="48" y="478">SOUTH SERVICE / {Math.round(selectedSpectrum.south)} H</text><text x="735" y="254">GROUND GATE</text><text x="735" y="273">{showAfter ? `+${gateFlow}` : '0'} / H</text><text className="traffic-city-caption" x="390" y="282">MAIN BUILDING / DERIVED FOOTPRINT</text></svg><div className="traffic-twin-city-label"><span>TRAFFIC SIGNAL FIELD</span><strong>{showAfter ? 'RETROFIT FLOW' : 'BASELINE FLOW'}</strong></div></div>
+      <aside className="traffic-twin-pulse"><span>CITY PULSE</span><h2>{showAfter ? 'Two paths, one direct gate' : 'Two paths, fenced edge'}</h2><p>{showAfter ? '改造后将小门作为独立流量信号接入小路网络。' : '现状连续围栏使小门流量为 0，小路维持独立绕行。'}</p><div className="traffic-pulse-ab"><div><span>A · 现状</span><strong>0</strong><small>地面小门 / 人·时</small></div><i>→</i><div className="after"><span>B · 改造后</span><strong>+{gateFlow}</strong><small>直达分流 / 人·时</small></div></div><div className="traffic-pulse-stats"><div><small>WEST WALKWAY</small><strong>{Math.round(selectedSpectrum.west)}</strong><em>人/小时</em></div><div><small>SOUTH SERVICE</small><strong>{Math.round(selectedSpectrum.south)}</strong><em>人/小时</em></div><div><small>GROUND GATE</small><strong>{showAfter ? Math.round(selectedSpectrum.gate) : 0}</strong><em>人/小时</em></div></div><div className="traffic-pulse-status"><span><i className="cyan" />西门人行小道</span><b>中</b><span><i className="amber" />南侧混行线</span><b>中</b><span><i className="gate" />地面小门</span><b>{showAfter ? '新增' : '关闭'}</b></div><small className="traffic-pulse-note">Telemetry simulated · 现场穿越计数待校准</small></aside>
+      <div className="traffic-twin-bottom"><span>FLOW SPEED</span><input type="range" min="0" max="23" value={selectedHour} onChange={(event) => setSelectedHour(Number(event.target.value))} /><strong>{String(selectedHour).padStart(2, '0')}:00</strong><button type="button" className={showAfter ? 'active' : ''} onClick={() => setShowAfter((value) => !value)}>{showAfter ? '改造后' : '现状'}</button><small>拖动时间点 · 点击切换 A/B 状态</small></div>
+    </section>
+    <section className="traffic-photo-compare" aria-label="改造前后生成照片对比"><div className="traffic-photo-head"><div><span>04 / PHOTO SCENARIO</span><h2>改造前后空间照片对比</h2><p>GPT Image 生成的方案示意，用来说明流量改造如何改变绕行、通行和混行关系。</p></div><em>GENERATED · SCENARIO</em></div><div className="traffic-photo-grid"><article className="traffic-photo-card barrier"><div className="traffic-photo-frame"><img src="/generated/traffic-comparisons/serpentine-barrier-before-after-v1.png" alt="蛇形不锈钢栏杆改造成直达无障碍通行的前后对比示意" /><span className="traffic-photo-before">A · 现状</span><span className="traffic-photo-after">B · 改造后</span></div><div className="traffic-photo-card-copy"><span>ACCESS 00 · USER PROVIDED</span><h3>蛇形栏杆 → 直达通行</h3><p>把多次折返的蛇形栏杆改成直线通行和转弯空间，保留必要的边缘扶手与安全边界。</p><strong>通行关系：折返阻断 → 直达可读</strong></div></article><article className="traffic-photo-card fence"><div className="traffic-photo-frame"><img src="/generated/traffic-comparisons/fence-before-after-v1.png" alt="连续围栏改造成地面小门的前后对比示意" /><span className="traffic-photo-before">A · 现状</span><span className="traffic-photo-after">B · 改造后</span></div><div className="traffic-photo-card-copy"><span>OBSTRUCTION 01</span><h3>连续围栏 → 地面小门</h3><p>把绕行线改成一条可识别的直达流线；图像仅表达空间关系，施工尺寸仍需现场复核。</p><strong>小门流量：0 → +{gateFlow} 人/小时</strong></div></article><article className="traffic-photo-card gate"><div className="traffic-photo-frame"><img src="/generated/traffic-comparisons/side-gate-before-after-v1.png" alt="侧边小门从封闭绕行改造成直达通道的前后对比示意" /><span className="traffic-photo-before">A · 现状</span><span className="traffic-photo-after">B · 改造后</span></div><div className="traffic-photo-card-copy"><span>ACCESS 02</span><h3>侧边小门 → 直达分流</h3><p>小门与自然行走线对齐，减少人在建筑边角处的折返和交叉。</p><strong>路径关系：绕行 → 直达</strong></div></article><article className="traffic-photo-card lane"><div className="traffic-photo-frame"><img src="/generated/traffic-comparisons/mixed-lane-before-after-v1.png" alt="南侧混行小路从拥挤改造成分流通行的前后对比示意" /><span className="traffic-photo-before">A · 现状</span><span className="traffic-photo-after">B · 改造后</span></div><div className="traffic-photo-card-copy"><span>FLOW 03</span><h3>混行小路 → 人行 / 非机动车分流</h3><p>让南侧小路的流量信号从一条拥挤线变成可解释的分流界面。</p><strong>南侧小路：{southFlow} 人/小时 · Scenario</strong></div></article></div></section>
+    <div className="traffic-only-kpis"><article><span>西门人行小道</span><strong>{westFlow}</strong><small>人/小时 · Scenario</small></article><article><span>南侧混行线</span><strong>{southFlow}</strong><small>人/小时 · Scenario</small></article><article><span>推荐地面小门</span><strong>0 → +{gateFlow}</strong><small>现状 → 改造后 · Scenario</small></article><article><span>流量口径</span><strong>2 + 1</strong><small>两条既有小路 + 一条新增通道</small></article></div>
+    <div className="traffic-only-grid">
+      <article className="traffic-only-map-card"><div className="traffic-only-section-head"><div><span>01 / FLOW MAP</span><h2>小路流线状态</h2></div><em>Derived / Simulated</em></div><div className="traffic-only-map"><svg viewBox="0 0 760 420" role="img" aria-label="两条小路与推荐小门流线图"><defs><linearGradient id="trafficRoadCyan" x1="0" x2="1"><stop offset="0" stopColor="#153945" /><stop offset=".55" stopColor="#54e0da" /><stop offset="1" stopColor="#a8f4ff" /></linearGradient><linearGradient id="trafficRoadAmber" x1="0" x2="1"><stop offset="0" stopColor="#463018" /><stop offset=".55" stopColor="#fbbf24" /><stop offset="1" stopColor="#ffe8a3" /></linearGradient><filter id="trafficGlow"><feGaussianBlur stdDeviation="4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter></defs><rect className="traffic-map-deck" x="0" y="0" width="760" height="420" rx="8" /><path className="traffic-map-building" d="M270 74h278v198H270z" /><path className="traffic-map-inner" d="M295 101h225v145H295z" /><path className="traffic-map-route cyan" d="M42 116 C132 116 154 152 250 152 S335 134 420 134" /><path className="traffic-map-route amber" d="M44 325 C160 325 184 273 268 273 S376 292 468 292" /><path className="traffic-map-gate" d="M420 134 C488 134 508 162 548 208" /><path className="traffic-map-route-after" d="M468 292 C536 292 552 254 602 224" /><circle className="traffic-map-node cyan" cx="42" cy="116" r="9" /><circle className="traffic-map-node amber" cx="44" cy="325" r="9" /><circle className="traffic-map-node gate" cx="548" cy="208" r="11" /><circle className="traffic-map-pulse" cx="548" cy="208" r="20" /><text x="28" y="89">WEST GATE</text><text x="28" y="356">SOUTH SERVICE</text><text x="565" y="201">GROUND GATE</text><text x="565" y="218">0 → +60 / H</text><text className="traffic-map-building-label" x="352" y="190">MAIN BUILDING</text><text className="traffic-map-building-label" x="362" y="208">DERIVED FOOTPRINT</text></svg><div className="traffic-map-legend"><span><i className="cyan" />西门人行小道 · {westFlow}/h</span><span><i className="amber" />南侧混行线 · {southFlow}/h</span><span><i className="gate" />推荐小门 · 0 → +{gateFlow}/h</span></div></div></article>
+      <article className="traffic-only-compare-card"><div className="traffic-only-section-head"><div><span>02 / A—B DELTA</span><h2>现状 → 改造后</h2></div><em>Scenario compare</em></div><div className="traffic-only-ab-stack"><div className="traffic-only-ab-row"><div><span>A · 现状</span><strong>连续围栏</strong><small>入口绕行 · 小门流量 0</small></div><b>→</b><div className="after"><span>B · 改造后</span><strong>地面小门</strong><small>直达分流 · +{gateFlow}/h</small></div></div><div className="traffic-only-ab-metrics"><div><span>西门人行小道</span><b>{westFlow} → {westFlow}</b><small>既有需求保持</small></div><div><span>南侧混行线</span><b>{southFlow} → {southFlow}</b><small>既有需求保持</small></div><div className="gate"><span>推荐地面小门</span><b>0 → +{gateFlow}</b><small>新增直达流量</small></div></div><div className="traffic-only-plan-select"><span>当前推演方案</span><select value={selectedPlan} onChange={(event) => setSelectedPlan(event.target.value)}>{Object.entries(planCopy ? { 'P-SAFE': '安全优先', 'P-EFFICIENCY': '效率优先', 'P-BALANCED': '综合平衡' } : {}).map(([id, label]) => <option key={id} value={id}>{id} · {label}</option>)}</select></div><div className={`traffic-only-plan-card ${planCopy.accent}`}><span>{selectedPlan}</span><strong>{planCopy.label}</strong><p>{planCopy.detail}</p><div><b>{westFlow} / {southFlow}</b><small>两条小路 · 人/小时</small><b>0 → +{gateFlow}</b><small>推荐小门 · 人/小时</small></div></div></div></article>
+    </div>
+    <article className="traffic-only-spectrum-card"><div className="traffic-only-section-head"><div><span>03 / 24H FLOW SPECTRUM</span><h2>全天流量节奏</h2></div><em>运营倍率 · Scenario</em></div><div className="traffic-spectrum-focus"><div><span>当前时刻</span><strong>{String(selectedHour).padStart(2, '0')}:00</strong><small>拖动上方 FLOW SPEED</small></div><div><span>西门人行小道</span><b>{Math.round(selectedSpectrum.west)} /h</b><span>南侧混行线</span><b>{Math.round(selectedSpectrum.south)} /h</b></div><div><span>普通工作日峰值</span><strong>{String(peakSpectrum.hour).padStart(2, '0')}:00</strong><small>两条小路合计情景最高</small></div></div><div className="traffic-spectrum"><div className="traffic-spectrum-y"><span>高峰</span><span>平峰</span><span>低谷</span></div><div className="traffic-spectrum-bars">{spectrum.map((point) => <div className={`traffic-spectrum-hour ${point.hour === selectedHour ? 'selected' : ''} ${point.hour === peakSpectrum.hour ? 'peak' : ''}`} key={point.hour}><div className="traffic-spectrum-bars-stack"><i className="cyan" style={{ '--bar-height': `${Math.max(5, point.west / maxSpectrum * 100)}%` }} /><i className="amber" style={{ '--bar-height': `${Math.max(5, point.south / maxSpectrum * 100)}%` }} /><i className="gate" style={{ '--bar-height': `${Math.max(5, point.gate / maxSpectrum * 100)}%` }} /></div><small>{point.hour % 3 === 0 ? String(point.hour).padStart(2, '0') : '·'}</small></div>)}</div></div><div className="traffic-spectrum-legend"><span><i className="cyan" />西门人行小道</span><span><i className="amber" />南侧混行线</span><span><i className="gate" />推荐小门（改造后）</span><small>24 根柱 = 24 小时；柱高是运营情景强度，不是逐人运动轨迹。</small></div></article>
+    <footer className="traffic-only-footer"><span><i />数据边界：两条小路分开读取；机动车仍为未实测；流量数字均标记 Scenario。</span><b>{project?.name || '某集团办公楼二次空间更新'}</b></footer>
+  </section>;
+}
+
+function SolutionComparisonPanel({ transportPlan }) {
+  const simulation = transportPlan?.lastSimulation;
+  const roadResult = (id, fallback) => Number(simulation?.roadResults?.find((item) => item.roadId === id)?.flow?.pedestrians ?? fallback);
+  const westFlow = roadResult('west-gate-walkway', 132);
+  const southFlow = roadResult('south-service-lane', 86);
+  const gateFlow = 60;
+  const solutions = [
+    { id: 'P-SAFE', label: '安全优先', title: '单个地面小门 + 保留车辆隔离', tone: 'safe', action: '在自然行走线设置单个地面小门，开口宽度待现场复核；围栏两端和混行线保持原边界。', result: '先解决绕行与人车冲突', confidence: 'Scenario' },
+    { id: 'P-EFFICIENCY', label: '效率优先', title: '两个对齐开口 + 分流', tone: 'efficiency', action: '在两条主要 desire line 上设置两个开口，分流关系待现场计数后确定。', result: '减少单点排队，门禁复杂度上升', confidence: 'Scenario' },
+    { id: 'P-BALANCED', label: '综合平衡', title: '单个地面小门 + 小路热力监测', tone: 'balanced', action: '先采用单开口，再用小路热力和现场穿越计数决定是否增加第二开口。', result: '演示与实施边界最清楚', confidence: 'Scenario' }
+  ];
+  return <article className="panel solution-comparison-panel">
+    <div className="solution-comparison-header"><div><span className="eyebrow-label">BEFORE / AFTER · SCENARIO COMPARE</span><h2>现状和改造后的流量对照</h2><p>两条既有小路保持独立；新增小门流量单列，不把不同目的地重复相加。</p></div><span className="status-chip scenario">Scenario · 可复算</span></div>
+      <div className="solution-flow-strip" aria-label="现状和改造后流量">
+      <div><span>现状 · 西门人行小道</span><strong>{westFlow}</strong><small>人/小时</small></div>
+      <i>→</i>
+      <div className="after"><span>改造后 · 西门人行小道</span><strong>{westFlow}</strong><small>既有需求保持</small></div>
+      <div><span>现状 · 南侧混行线</span><strong>{southFlow}</strong><small>人/小时</small></div>
+      <i>→</i>
+      <div className="after"><span>改造后 · 南侧混行线</span><strong>{southFlow}</strong><small>既有需求保持</small></div>
+    </div>
+    <div className="solution-flow-addition"><span>推荐地面小门 · 现状 → 改造后</span><strong>0 → +{gateFlow}</strong><small>人/小时 · 现状无开口，改造后为跨围栏直达情景</small></div>
+    <div className="solution-card-grid">{solutions.map((solution) => <article className={`solution-card ${solution.tone}`} key={solution.id}><div className="solution-card-top"><span>{solution.id}</span><strong>{solution.label}</strong></div><h3>{solution.title}</h3><p>{solution.action}</p><div className="solution-card-metrics"><span><small>两条小路 · 现状/改造后</small><b>{westFlow} / {southFlow}</b><em>人/小时 · 既有需求保持</em></span><span><small>小门 · 现状/改造后</small><b>0 → +{gateFlow}</b><em>人/小时 · Scenario</em></span></div><footer><span>{solution.result}</span><em>{solution.confidence}</em></footer></article>)}</div>
+    <div className="solution-comparison-note"><strong>这张对比图怎么读</strong><span>左侧是当前两条小路的独立 Scenario 压力，右侧是改造后保留既有需求并新增直达小门的 Scenario 流量。实际施工前，需要用现场按小时穿越计数替换这些情景值。</span></div>
+  </article>;
+}
+
+function ProposalWorkspace({ project, transportPlan, assets, artifacts, settings, sceneObjects, observations, health, proposals, busy, setBusy, notify, refresh, nextStep }) {
+  const [slot, setSlot] = useState(settings.timeSlots?.[0]?.id || 'weekday_arrival');
+  const [contextText, setContextText] = useState(() => JSON.stringify({
+    schema: 'observation_bundle.v1', scene_version: 'S1', time_slot: 'weekday_arrival', sample_level: 'single_observation',
+    calibration: { mode: 'none' }, metrics: [], conflicts: [], scene_objects: [], allowed_actions: allowedActions, data_gaps: ['尚未完成真实 YOLO 分析']
+  }, null, 2));
+  const [validation, setValidation] = useState(null);
+
+  const loadBundle = async () => {
+    try {
+      const result = await api(`/observations/bundle?slotId=${encodeURIComponent(slot)}`);
+      setContextText(JSON.stringify(result.bundle, null, 2));
+      notify('success', `已载入 ${result.bundle.metrics.length} 项真实聚合指标与 ${result.bundle.conflicts.length} 项冲突`);
+    } catch (error) {
+      notify('warning', error.message, error.details);
+    }
+  };
+
+  useEffect(() => {
+    if (project && observations.some((item) => item.schema === 'observation_bundle.v1')) loadBundle();
+  }, [project?.id, slot, observations.length, sceneObjects.length]);
+
+  const validateLlm = async () => {
+    setBusy(true);
+    try { const result = await api('/llm/validate'); setValidation(result); notify('success', '已验证网关和精确模型 ID'); }
+    catch (error) { setValidation({ ok: false, message: error.message }); notify('warning', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+
+  const generate = async () => {
+    let currentContext;
+    try { currentContext = JSON.parse(contextText); } catch { return notify('warning', '当前 ObservationBundle 无法解析，请重新载入'); }
+    if (!Array.isArray(currentContext.conflicts) || !currentContext.conflicts.length) return notify('warning', '需要真实冲突证据才能请求方案');
+    setBusy(true);
+    try {
+      await api('/llm/propose', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slotId: slot, sceneVersion: 'S1' }) });
+      notify('success', 'AI Draft 已生成并通过引用校验');
+      refresh();
+    } catch (error) { notify('warning', error.message, error.details); }
+    finally { setBusy(false); }
+  };
 
   return (
-    <div className="runtime-console-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="runtime-console" role="dialog" aria-modal="true" aria-labelledby="runtime-console-title">
-        <header className="runtime-console-header">
-          <div><span className="expert-only">SYSTEM / LIVE DIAGNOSTICS</span><h2 id="runtime-console-title"><span className="operator-only">设置</span><span className="expert-only">系统诊断</span></h2><p className="operator-only">当前使用操作者视图，只显示完成项目所需的功能。</p><p className="expert-only">这些信息仅用于系统维护和问题排查，操作页默认不显示。</p></div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭系统运行时" title="关闭"><X size={19} /></button>
-        </header>
-        <div className="runtime-console-toolbar">
-          <span className={`status-chip expert-only ${health?.ok ? 'ready' : 'blocked'}`}>{health?.ok ? 'API ONLINE' : 'API WAITING'}</span>
-          <span className="expert-only">{health?.timestamp ? `后端时间 ${new Date(health.timestamp).toLocaleString('zh-CN')}` : '尚未取得健康状态'}</span>
-          <button type="button" className={`secondary-button runtime-mode-toggle ${expertMode ? 'active' : ''}`} aria-pressed={expertMode} aria-label={expertMode ? '隐藏专家信息' : '显示专家信息'} onClick={() => onExpertModeChange(!expertMode)}><Settings2 size={14} />{expertMode ? '恢复操作者视图' : '显示专家信息'}</button>
-          <button type="button" className="secondary-button expert-only" onClick={onRefresh} disabled={busy}><RefreshCw size={14} className={busy ? 'spin' : ''} />{busy ? '刷新中' : '刷新状态'}</button>
-        </div>
-        <div className="operator-settings-note operator-only"><Settings2 size={20} /><div><strong>专家信息已隐藏</strong><span>接口、模型、运行时、对象 ID 和审计数据不参与日常操作。只在维护或排查问题时开启专家信息。</span></div></div>
-        <dl className="runtime-counts expert-only" aria-label="运行数据计数">
-          <div><dt>源资产</dt><dd>{counts.assets ?? 0}</dd></div>
-          <div><dt>观测记录</dt><dd>{counts.observations ?? 0}</dd></div>
-          <div><dt>方案草案</dt><dd>{counts.proposals ?? 0}</dd></div>
-          <div><dt>阶段资产</dt><dd>{counts.artifacts ?? 0}</dd></div>
-        </dl>
-        <div className="runtime-console-groups expert-only">
-          {groups.map((group) => <section className="runtime-console-group" key={group.title}><h3>{group.title}</h3>{group.items.map((item) => <RuntimeConsoleLine key={item.label} {...item} />)}</section>)}
-        </div>
-      </section>
-    </div>
+    <section className="stage-layout">
+      <StageHeading eyebrow="STEP 04 / EVIDENCE-BOUND REASONING" title="让模型解释关系，\n不让它编造数字。" description="系统结合视频观测、150 米交通接驳场景与三维场景，生成安全优先、效率优先和综合平衡三套可对比方案。" />
+      <div className="stage-content proposal-stage">
+        <AmapRhythmPanel />
+        <RetrofitWipeCompare />
+        <AmapTwinScene />
+        {transportPlan?.lastSimulation && <article className="panel transport-context-card"><PanelHeader icon={Route} title="交通接驳已进入方案上下文" action={<span className="status-chip scenario">Scenario</span>} /><div className="transport-context-grid"><div><strong>{transportPlan.lastSimulation.label}</strong><span>{transportPlan.lastSimulation.timeWindow}</span></div><div><strong>独立路段</strong><span>人流分开核对</span></div><div><strong>{transportPlan.lastSimulation.hotspots?.length || 0}</strong><span>冲突热点</span></div></div><small>地铁接驳路段按各自OD流量提交给 AI，不合并成单一路径；站口坐标和路网保持“近似 / Scenario”边界。</small></article>}
+        <SolutionComparisonPanel transportPlan={transportPlan} />
+        <ScenarioLab {...{ project, assets, artifacts, sceneObjects, transportPlan, observations, busy, setBusy, notify }} />
+        <article className="panel llm-panel expert-only">
+          <PanelHeader icon={BrainCircuit} title="大模型网关" action={<span className={`status-chip ${health?.llm?.configured ? 'ready' : 'blocked'}`}>{health?.llm?.configured ? 'KEY PRESENT' : 'KEY MISSING'}</span>} />
+          <dl className="config-list"><div><dt>BASE URL</dt><dd>{health?.llm?.baseUrl || '—'}</dd></div><div><dt>MODEL</dt><dd>{health?.llm?.model || '—'}</dd></div><div><dt>ADAPTER</dt><dd>Responses → Chat fallback</dd></div></dl>
+          <button className="secondary-button wide" onClick={validateLlm} disabled={busy}><RefreshCw size={15} /> 验证精确模型</button>
+          {validation && <div className={`validation-result ${validation.ok ? 'success' : 'warning'}`}>{validation.ok ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}<span>{validation.ok ? '模型 ID 已精确匹配' : validation.warning || validation.message || '验证未通过'}</span></div>}
+          <p className="secret-note">密钥只由服务端环境变量读取，前端不可见，也不会写入项目档案。</p>
+        </article>
+
+        <article className="panel context-panel expert-only">
+          <PanelHeader icon={Database} title="ObservationBundle / 输入契约" action={<button className="text-button" onClick={loadBundle}>从真实观测载入</button>} />
+          {contextText.includes('"test_only": true') && <div className="test-only-banner"><AlertTriangle size={15} /><span><strong>TEST ONLY</strong>大模型可用于验证方案链，但结论不可作为现场实测或实施依据。</span></div>}
+          <label className="bundle-slot">时间段<select value={slot} onChange={(event) => setSlot(event.target.value)}>{settings.timeSlots.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select><span className="status-chip">JSON V1</span></label>
+          <textarea spellCheck="false" value={contextText} readOnly aria-label="ObservationBundle JSON（只读）" />
+          <div className="contract-note"><AlertTriangle size={15} /> 该证据包由服务端按已存观测重建，仅供审阅；方案请求不接受前端替换事实。</div>
+        </article>
+
+        <article className="panel reasoning-flow expert-only">
+          <PanelHeader icon={Sparkles} title="受控推理链" />
+          <div className="flow-diagram">
+            {['聚合指标', '规则冲突', 'GPT 诊断', '动作白名单', '模拟复算', '专家审核'].map((item, i) => <React.Fragment key={item}><span>{item}</span>{i < 5 && <ChevronRight size={14} />}</React.Fragment>)}
+          </div>
+          <div className="guardrails"><span><XCircle size={14} /> 禁止虚构对象 ID</span><span><XCircle size={14} /> 禁止改善百分比</span><span><CheckCircle2 size={14} /> 每条结论引用证据</span></div>
+        </article>
+
+        <article className="panel proposal-output">
+          <PanelHeader icon={Layers3} title="方案草案" action={<span className="panel-count">{proposals.length} 份</span>} />
+          {proposals.length === 0 ? <div className="proposal-empty"><BrainCircuit size={28} /><strong>尚无可审核方案</strong><span>请先完成视频分析并确认空间冲突</span></div> : proposals.slice(-3).reverse().map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} />)}
+          <button className="primary-button wide" disabled={busy || !project || !health?.llm?.configured} onClick={generate}><Sparkles size={16} /> 生成空间优化方案</button>
+        </article>
+      </div>
+      <StageFooter left="方案通过复算与专家审核后才可发布" actions={<button className="primary-button" onClick={nextStep}>进入专家成稿 <ArrowRight size={16} /></button>} />
+    </section>
   );
 }
-function RuntimeConsoleLine({ label, ready, state, detail }) { return <div className="runtime-console-line"><RuntimeStatusIcon {...{ state, ready }} /><strong>{label}</strong><small>{detail}</small></div>; }
-function ProjectSummary({ project }) { return <div className="project-summary"><strong>{project?.name}</strong><p>{project?.address || '未填写地址说明'}</p><span className="expert-only">{project?.latitude}, {project?.longitude} · {project?.coordinateSystem}</span></div>; }
-function AssetRow({ asset }) { const Icon = asset.type === 'video' ? FileVideo : asset.type === '3d' || asset.type === 'cad' ? Box : Database; const evidenceClass = asset.status === 'failed' ? 'hypothesis' : String(asset.evidenceLevel || 'Observed').toLowerCase().replace(' ', '-'); const typeLabel = asset.type === 'video' ? '视频' : asset.type === 'image' ? '图片' : asset.type === 'cad' ? '平面图' : asset.type === '3d' ? '三维模型' : '资料'; const displayName = asset.type === 'video' ? videoDisplayName(asset) : asset.name; const corridorIndex = asset.type === 'video' ? siteCorridorVideoPrefixes.findIndex((prefix) => String(asset.name || '').toLowerCase().startsWith(prefix)) : -1; return <div className="asset-row"><span><Icon size={16} /></span><div><strong>{displayName}</strong><small>{typeLabel} · {formatBytes(asset.size)}{corridorIndex >= 0 ? ` · 连续路线第 ${corridorIndex + 1} 段` : ''}{asset.testOnly ? ' · TEST ONLY' : ''}<span className="expert-only">{asset.status && asset.status !== 'ready' ? ` · ${asset.status.toUpperCase()}` : ''}</span></small></div><code className="expert-only" title={asset.sha256}>{asset.sha256?.slice(0, 8) || '—'}</code><i className={`evidence-dot expert-only ev-${evidenceClass}`} /></div>; }
-function EmptyLine({ text }) { return <div className="empty-line"><CircleDot size={14} />{text}</div>; }
-function UnavailableSource({ icon: Icon, title, text }) { return <div className="source-prompt"><Icon size={20} /><div><strong>{title}</strong><p>{text}</p></div></div>; }
-function GateRow({ label, pass }) { return <div className="gate-row"><span className={pass ? 'pass' : ''}>{pass ? <Check size={13} /> : <X size={13} />}</span><strong>{label}</strong><small>{pass ? '已完成' : '待完成'}</small></div>; }
-function ProposalCard({ proposal }) { return <div className="proposal-card"><div><span className={`status-chip ${proposal.status === 'Expert Approved' ? 'ready' : 'blocked'}`}>{proposal.status === 'Expert Approved' ? '已通过专家审核' : '待审核方案'}</span>{proposal.testOnly && <span className="status-chip blocked">演示数据</span>}<strong>{proposal.draft?.plans?.[0]?.name || proposal.id}</strong></div><small>{proposal.draft?.diagnoses?.length || 0} 项诊断 · {proposal.draft?.plans?.reduce((sum, p) => sum + (p.actions?.length || 0), 0) || 0} 项调整</small></div>; }
 
-function Toolchain() {
-  const tools = [['OSM / DEM', '地理基础'], ['COLMAP', '相机位姿'], ['Nerfstudio', '3D Gaussian'], ['Open3D', '点云处理'], ['Trimesh', '语义几何'], ['Three.js', '网页合成']];
-  return <div className="toolchain">{tools.map(([name, detail], i) => <React.Fragment key={name}><div><strong>{name}</strong><span>{detail}</span></div>{i < tools.length - 1 && <ChevronRight size={13} />}</React.Fragment>)}</div>;
+const operationProfiles = {
+  office_weekday: {
+    label: '普通工作日',
+    note: '以上班、午间、下班为三个运营峰值；倍率是可审阅的 Scenario 假设。',
+    multipliers: { 0: .08, 1: .06, 2: .05, 3: .05, 4: .07, 5: .14, 6: .36, 7: .78, 8: 1, 9: .7, 10: .48, 11: .63, 12: .76, 13: .56, 14: .43, 15: .46, 16: .62, 17: .88, 18: .96, 19: .67, 20: .43, 21: .28, 22: .18, 23: .11 }
+  },
+  logistics_window: {
+    label: '后勤集中日',
+    note: '上午后勤作业加权，用于检查卸货与办公到达叠加时的空间压力。',
+    multipliers: { 0: .08, 1: .06, 2: .05, 3: .05, 4: .07, 5: .14, 6: .36, 7: .78, 8: 1, 9: .92, 10: 1.08, 11: .94, 12: .76, 13: .56, 14: .43, 15: .46, 16: .62, 17: .88, 18: .96, 19: .67, 20: .43, 21: .28, 22: .18, 23: .11 }
+  },
+  event_day: {
+    label: '活动日压力测试',
+    note: '午间与晚间进出放大，作为独立 Scenario，不并入普通日观测基线。',
+    multipliers: { 0: .1, 1: .08, 2: .06, 3: .06, 4: .08, 5: .16, 6: .4, 7: .82, 8: 1, 9: .78, 10: .64, 11: .88, 12: 1.2, 13: 1.06, 14: .72, 15: .68, 16: .82, 17: 1.08, 18: 1.18, 19: 1.04, 20: .78, 21: .5, 22: .3, 23: .16 }
+  }
+};
+
+function archiveSafeDate(observedDate = '') {
+  const safeCutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return observedDate && observedDate < safeCutoff ? observedDate : safeCutoff;
 }
 
-function Toast({ kind, message, details, onClose }) {
-  const Icon = kind === 'success' ? CheckCircle2 : kind === 'warning' ? AlertTriangle : XCircle;
-  const detailText = formatToastDetails(details);
-  return <div className={`toast ${kind}`}><Icon size={19} /><div><strong>{message}</strong>{detailText && <small>{detailText}</small>}</div><button onClick={onClose}><X size={15} /></button></div>;
+function ScenarioLab({ project, assets, artifacts, sceneObjects, transportPlan, observations, busy, setBusy, notify }) {
+  const latestObservedDate = useMemo(() => observations
+    .filter((item) => item.schema === 'observation_bundle.v1' && item.capturedAt)
+    .map((item) => String(item.capturedAt).slice(0, 10)).sort().at(-1) || '', [observations]);
+  const actors = useMemo(() => [...new Set(observations
+    .filter((item) => item.schema === 'observation_bundle.v1')
+    .flatMap((item) => item.metrics || [])
+    .filter((metric) => metric.kind === 'unique_track_flow_rate' && metric.actor)
+    .map((metric) => metric.actor))].sort(), [observations]);
+  const [date, setDate] = useState(() => archiveSafeDate(latestObservedDate));
+  const [actor, setActor] = useState('all');
+  const [profileId, setProfileId] = useState('office_weekday');
+  const [scenario, setScenario] = useState(null);
+  const [selectedHour, setSelectedHour] = useState(12);
+  const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [roadSearch, setRoadSearch] = useState('');
+  const [showAdvancedRoads, setShowAdvancedRoads] = useState(false);
+  const [scenarioState, setScenarioState] = useState({ status: 'idle', message: '选择日期后获取真实历史天气并生成情景。' });
+  const autoScenarioKeyRef = useRef('');
+  const scenarioRoads = useMemo(() => extractScenarioRoads(sceneObjects), [sceneObjects]);
+  const scenarioAreas = useMemo(() => sceneObjects.filter((object) =>
+    object?.properties?.stale !== true
+    && object?.geometry?.type === 'Polygon'
+    && ['walkway', 'loading_zone', 'dropoff_zone', 'landscape'].includes(object.type)
+  ).map((object) => ({ id: object.id, label: object.label || object.id, type: object.type })), [sceneObjects]);
+  const selectedRoute = scenarioRoads.find((route) => route.id === selectedRouteId) || null;
+  const selectedArea = scenarioAreas.find((area) => area.id === selectedRouteId) || null;
+  const selectedSpatialTarget = selectedRoute || selectedArea;
+  const scenarioIsGlobal = !selectedSpatialTarget;
+  const routeMetricBound = useMemo(() => Boolean(selectedRouteId && observations.some((item) =>
+    item.schema === 'observation_bundle.v1' && (item.metrics || []).some((metric) =>
+      metric.kind === 'unique_track_flow_rate' && metric.targetId === selectedRouteId
+    )
+  )), [observations, selectedRouteId]);
+  const scenarioTargetLabel = selectedRoute
+    ? (routeMetricBound ? '道路情景 · 已绑定观测' : '道路情景 · 未绑定观测')
+    : selectedArea
+      ? '区域情景 · 指标待绑定'
+      : '全局情景 · 不绑定道路';
+  // 历史审计词汇“站点总量 → 所选道路的 Scenario 映射”仍保留在契约语义中；界面文案进一步区分已绑定和未绑定。
+  const visibleScenarioRoads = useMemo(() => {
+    const term = roadSearch.trim().toLowerCase();
+    const isPriority = (route) => route.id === selectedRouteId
+      || !/^osm-way-\d+-road$/i.test(route.label || '')
+      || /四平路|设计院|小道|停车|入口|连续|通道/i.test(route.label || '')
+      || observations.some((item) => (item.metrics || []).some((metric) => metric.targetId === route.id));
+    return scenarioRoads.filter((route) => {
+      if (term && !`${route.label} ${route.id}`.toLowerCase().includes(term)) return false;
+      return showAdvancedRoads || isPriority(route);
+    });
+  }, [scenarioRoads, observations, selectedRouteId, roadSearch, showAdvancedRoads]);
+
+  useEffect(() => { if (!date) setDate(archiveSafeDate(latestObservedDate)); }, [date, latestObservedDate]);
+  useEffect(() => {
+    if (selectedRouteId && ![...scenarioRoads, ...scenarioAreas].some((target) => target.id === selectedRouteId)) setSelectedRouteId('');
+  }, [scenarioRoads, scenarioAreas, selectedRouteId]);
+
+  const runScenario = async ({ auto = false } = {}) => {
+    if (!project) return notify('warning', '请先建立项目地理锚点');
+    if (!date) return notify('warning', '请选择情景日期');
+    setBusy(true);
+    setScenarioState({ status: 'loading', message: '正在获取 Open-Meteo Archive 并重建 24 小时曲线…' });
+    try {
+      let scenarioWeather;
+      let weatherWarning = '';
+      try {
+        const weatherResult = await api(`/weather/archive?date=${encodeURIComponent(date)}&latitude=${encodeURIComponent(project.latitude)}&longitude=${encodeURIComponent(project.longitude)}`, { signal: AbortSignal.timeout(25_000) });
+        scenarioWeather = weatherResult.weather;
+      } catch (weatherError) {
+        scenarioWeather = {
+          source: 'unavailable', evidenceLevel: 'Scenario', requestedProvider: 'Open-Meteo Archive',
+          errorCode: weatherError.code || 'WEATHER_PROVIDER_FAILED', errorMessage: weatherError.message
+        };
+        weatherWarning = `${weatherError.message}；已在无天气数据模式下生成流量与太阳情景。`;
+      }
+      const result = await api('/scenarios/24h', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({
+          date, metricKind: 'unique_track_flow_rate', actor: actor === 'all' ? null : actor,
+          targetId: routeMetricBound ? selectedRouteId : null,
+          operationMultipliers: operationProfiles[profileId].multipliers, weather: scenarioWeather
+        })
+      });
+      const firstAnchor = result.scenario.curve.find((point) => point.sourceWindowIds?.length);
+      const anchorLabel = result.scenario.anchors.some((point) => point.sourceNature === 'virtual_test') ? 'Test 锚点' : 'Observed 锚点';
+      setScenario(result.scenario);
+      setSelectedHour(firstAnchor?.hour ?? 12);
+      setScenarioState({ status: 'ready', message: `已生成 ${result.scenario.curve.length} 个小时点，其中 ${result.scenario.anchors.length} 个为 ${anchorLabel}。${weatherWarning}` });
+      if (!auto) notify(weatherWarning ? 'warning' : 'success', weatherWarning || '24 小时天气与流量情景已生成');
+    } catch (error) {
+      const message = error.code === 'SCENARIO_ANCHORS_REQUIRED'
+        ? '没有已持久化的真实观测锚点，不能生成全天情景曲线。'
+        : error.name === 'TimeoutError' || error.name === 'AbortError'
+          ? '24小时情景生成超时，请稍后重试。'
+        : error.message;
+      setScenario(null);
+      setScenarioState({ status: 'error', message });
+      if (!auto) notify('warning', message, error.details);
+    } finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!project?.id || !date) return;
+    const key = [project.id, date, actor, profileId, selectedRouteId, routeMetricBound ? 'bound' : 'unbound'].join('|');
+    if (autoScenarioKeyRef.current === key) return;
+    autoScenarioKeyRef.current = key;
+    void runScenario({ auto: true });
+  }, [project?.id, date, actor, profileId, selectedRouteId, routeMetricBound]);
+
+  const curve = scenario?.curve || [];
+  const selectedScenarioPoint = curve.find((point) => point.hour === selectedHour) || null;
+  const maxUpper = Math.max(1, ...curve.map((point) => Number(point.interval?.[1] ?? point.value ?? 0)));
+  const selectedWeather = selectedScenarioPoint?.weather || {};
+  const selectedUnit = '对象/分钟 · Scenario';
+  const flowColor = (value) => scenarioFlowColor(value, maxUpper);
+  const scenarioFlowPlan = useMemo(() => buildScenarioFlowPlan(sceneObjects, selectedScenarioPoint, { maxParticles: 72, selectedRouteId }), [sceneObjects, selectedScenarioPoint, selectedRouteId]);
+
+  return (
+    <article className="panel scenario-lab">
+      <PanelHeader icon={CloudRain} title="24 小时天气与流量情景" action={<span className={`status-chip expert-only ${scenarioState.status === 'ready' ? 'ready' : scenarioState.status === 'error' ? 'blocked' : ''}`}>{scenarioState.status.toUpperCase()}</span>} />
+      <div className="scenario-control-strip">
+        <label><span>情景日期</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+        <label><span>对象类型</span><select value={actor} onChange={(event) => setActor(event.target.value)}><option value="all">全部已观测对象</option>{actors.map((item) => <option value={item} key={item}>{actorLabels[item] || item}</option>)}</select></label>
+        <div className="road-binding-control"><label><span>道路/区域绑定</span><select aria-label="道路或区域绑定；未选择时为全局情景" title="未绑定道路时生成全局情景，不绘制道路粒子" value={selectedRouteId} onChange={(event) => setSelectedRouteId(event.target.value)}><option value="">不绑定道路（不显示粒子）</option>{visibleScenarioRoads.length > 0 && <optgroup label={showAdvancedRoads ? '全部匹配道路' : '重点道路'}>{visibleScenarioRoads.map((route) => <option value={route.id} key={route.id}>{route.label || '未命名道路'}{route.source === 'OpenStreetMap' ? ' · OSM概念线' : ''}</option>)}</optgroup>}{scenarioAreas.length > 0 && <optgroup label="区域">{scenarioAreas.map((area) => <option value={area.id} key={area.id}>{area.label}</option>)}</optgroup>}</select></label><div><input aria-label="搜索道路" placeholder="搜索道路名称或ID" value={roadSearch} onChange={(event) => setRoadSearch(event.target.value)} /><button type="button" className={showAdvancedRoads ? 'active' : ''} onClick={() => setShowAdvancedRoads((value) => !value)}>{showAdvancedRoads ? '收起高级列表' : `高级道路 ${scenarioRoads.length}`}</button></div></div>
+        <label><span>运营假设</span><select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{Object.entries(operationProfiles).map(([id, profile]) => <option value={id} key={id}>{profile.label}</option>)}</select></label>
+        <button className="primary-button" disabled={busy || !project || !date} onClick={runScenario}><Play size={15} /> {scenarioState.status === 'ready' ? (scenarioIsGlobal ? '重新生成全局情景' : '重新生成道路情景') : (scenarioIsGlobal ? '生成全局情景' : '生成道路情景')}</button>
+      </div>
+      <div className="scenario-assumption"><AlertTriangle size={14} /><span><strong>运营倍率假设</strong>{operationProfiles[profileId].note}</span></div>
+      <div className={`route-binding-status ${routeMetricBound ? 'observed-bound' : selectedSpatialTarget ? 'scenario-bound' : 'unbound'}`}>
+        <Route size={14} />
+        <span><strong>{selectedSpatialTarget ? selectedSpatialTarget.label : '全局情景 · 不绑定道路'}</strong><span className="expert-only">{selectedRoute ? `${scenarioTargetLabel} · ${selectedRoute.highway || 'road'} · ${selectedRoute.widthM ? `${selectedRoute.widthM}m 概念宽度` : '宽度未记录'} · ${selectedRoute.id}` : selectedArea ? `${scenarioTargetLabel} · ${selectedArea.type} · ${selectedArea.id}` : `${scenarioTargetLabel} · ${scenarioRoads.length} 条道路 · ${scenarioAreas.length} 个区域可选`}</span></span>
+        <em className="expert-only">{routeMetricBound ? '该道路已有 targetId 观测绑定' : selectedRoute ? '已选道路仅用于空间展示；未找到同 ID 观测，指标按全局锚点生成' : selectedArea ? '区域仅定位描边；占用量需同 ID 的 ROI 指标' : '全局情景不绘制道路流量粒子'}</em>
+      </div>
+      <div className="scenario-console">
+        <div className="scenario-viewport">
+          <SceneViewport project={project} assets={assets} artifacts={artifacts} sceneObjects={sceneObjects} transportPlan={transportPlan} scenarioPoint={selectedScenarioPoint} scenarioFlowColor={flowColor(selectedScenarioPoint?.value)} selectedRouteId={selectedRouteId} preferredModelKind="osm_context_glb" />
+          {selectedScenarioPoint && <div className="scenario-flow-badge" style={{ '--flow-color': flowColor(selectedScenarioPoint.value) }}><i /><span><strong>{scenarioIsGlobal ? '全局情景状态' : routeMetricBound ? '当前道路流量示意' : '道路情景空间示意'}</strong>{scenarioFlowPlan.routes.length ? `${selectedRoute?.label || selectedRouteId} · ${routeMetricBound ? '流量随数值变化' : '情景值随时间变化，非道路实测'}` : selectedArea ? `${selectedArea.label} · 当前显示区域位置` : scenarioIsGlobal ? '全局情景 · 不绘制道路粒子' : '当前没有可显示的道路'}<small className="expert-only">{scenarioIsGlobal ? 'Scenario 全局映射 · 非逐点轨迹' : routeMetricBound ? 'Scenario 道路映射 · 非逐点轨迹' : 'Scenario 全局锚点 · 仅作道路空间示意'} · {scenarioFlowPlan.particles.length} 个可视粒子</small></span></div>}
+          {selectedScenarioPoint && <div className="scenario-hud">
+            <div><span>{String(selectedHour).padStart(2, '0')}:00</span><strong>{selectedScenarioPoint.value.toFixed(2)} <small>{selectedUnit}</small></strong></div>
+            <dl>
+              <div><dt>数据类型</dt><dd className={selectedScenarioPoint.evidenceLevel === 'Observed' ? 'observed' : 'scenario'}>{selectedScenarioPoint.testOnly ? '演示情景' : selectedScenarioPoint.evidenceLevel === 'Observed' ? '现场观测' : '情景推演'}</dd></div>
+              <div><dt>置信区间</dt><dd>{selectedScenarioPoint.interval?.map((value) => Number(value).toFixed(2)).join(' – ')}</dd></div>
+              <div><dt>太阳高度</dt><dd>{selectedScenarioPoint.sun?.altitude_deg?.toFixed(1)}°</dd></div>
+              <div><dt>云量 / 降水</dt><dd>{selectedWeather.cloud_cover ?? '—'}% / {selectedWeather.precipitation ?? '—'} mm</dd></div>
+            </dl>
+          </div>}
+        </div>
+        <div className="scenario-track-panel">
+          <div className="scenario-track-head">
+            <div><strong>24H FLOW SPECTRUM <em>· 全天流量预测时间轴</em></strong><span>把现场观测锚点、运营倍率和天气状态展开成 24 个小时点；节点表示情景强度，不是逐个人员轨迹。{scenarioState.message}</span></div>
+            <div className="scenario-key"><span><i className="observed" />现场观测<small className="expert-only">Observed 实测锚点</small></span><span><i className="scenario" />情景推演<small className="expert-only">Scenario 情景推演</small></span></div>
+          </div>
+          {curve.length ? <div className="scenario-timeline-scroll"><div className="scenario-timeline" role="list" aria-label="24小时流量与置信区间">
+            {curve.map((point) => {
+              const upper = Number(point.interval?.[1] ?? point.value);
+              const lower = Number(point.interval?.[0] ?? point.value);
+              const height = Math.max(5, Number(point.value) / maxUpper * 100);
+              const intervalHeight = Math.max(2, (upper - lower) / maxUpper * 100);
+              return <button type="button" role="listitem" key={point.hour} aria-pressed={selectedHour === point.hour} aria-label={`${point.hour}时 ${point.evidenceLevel} ${point.value} ${selectedUnit}，置信区间 ${lower} 到 ${upper}`} className={`hour-node ${point.evidenceLevel.toLowerCase()} ${selectedHour === point.hour ? 'selected' : ''}`} style={{ '--flow-color': flowColor(point.value), '--bar-height': `${height}%`, '--interval-height': `${intervalHeight}%` }} onClick={() => setSelectedHour(point.hour)}><span className="interval-whisker" /><i /><small>{point.hour % 3 === 0 ? String(point.hour).padStart(2, '0') : '·'}</small></button>;
+            })}
+          </div></div> : <div className={`scenario-empty ${scenarioState.status}`}><CloudRain size={25} /><strong>{scenarioState.status === 'error' ? '情景链未生成' : scenarioState.status === 'loading' ? '正在运行' : '等待运行'}</strong><span>{scenarioState.message}</span></div>}
+          {selectedScenarioPoint?.sourceWindowIds?.length > 0 && <p className="anchor-provenance expert-only">{selectedScenarioPoint.testOnly ? 'Test 锚点' : 'Observed 锚点'}来自视频窗口 {selectedScenarioPoint.sourceWindowIds.join(', ')}；原始日期 {selectedScenarioPoint.observedDates?.join(', ') || '未记录'}。{selectedScenarioPoint.testOnly ? '该数据仅用于工作流验收，不是现场实测。' : '当前天气仍对应上方所选情景日期。'}</p>}
+        </div>
+      </div>
+    </article>
+  );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+function ReviewWorkspace({ project, proposals, assets, artifacts, health, busy, setBusy, notify, refresh }) {
+  const drafts = proposals.filter((p) => p.status !== 'Expert Approved');
+  const approved = proposals.filter((p) => p.status === 'Expert Approved');
+  const [reviewForms, setReviewForms] = useState({});
+  const approve = async (proposalId) => {
+    const review = reviewForms[proposalId] || { reviewer: '', note: '' };
+    if (!review.reviewer.trim()) return notify('warning', '请填写审核人');
+    if (!review.note.trim()) return notify('warning', '请填写审核意见');
+    setBusy(true);
+    try {
+      await api(`/proposals/${proposalId}/approve`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reviewer: review.reviewer.trim(), note: review.note.trim() })
+      });
+      notify('success', '方案已标记为 Expert Approved');
+      refresh();
+    }
+    catch (error) { notify('error', error.message); }
+    finally { setBusy(false); }
+  };
+  const updateReview = (proposalId, field, value) => {
+    setReviewForms((current) => ({ ...current, [proposalId]: { reviewer: '', note: '', ...current[proposalId], [field]: value } }));
+  };
+  const simulate = async (proposal) => {
+    if (!proposal.sourceContext?.metrics?.length) return notify('warning', '该方案没有可复算的真实聚合指标');
+    setBusy(true);
+    try {
+      for (const plan of proposal.draft?.plans || []) {
+        await api('/simulations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposalId: proposal.id, planId: plan.id }) });
+      }
+      notify('success', '三套方案已完成确定性仿真复算');
+      await refresh();
+    } catch (error) { notify('warning', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+  const exportApproved = async (proposal) => {
+    setBusy(true);
+    try {
+      const result = await api('/exports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ proposalId: proposal.id, formats: ['json', 'csv', 'xlsx', 'pdf', 'poster_pdf', 'poster_png', 'offline_webgl', 'demo_mp4'] }) });
+      notify('success', `已生成 ${result.export.files.length} 个可追溯成果文件`);
+      await refresh();
+    } catch (error) { notify('warning', error.message, error.details); }
+    finally { setBusy(false); }
+  };
+  const approvedProposal = approved.at(-1);
+  const testOnly = proposals.some((proposal) => proposal.testOnly);
+  const webglReady = Boolean(approvedProposal) && artifacts.some((artifact) => ['dwg_plan_glb', 'dwg_extrusion_glb', 'blender_enhanced_glb', 'skp_glb', 'osm_context_glb', 'gaussian_spz', 'gaussian_ply'].includes(artifact.kind));
+  const demoReady = Boolean(approvedProposal) && Boolean(health?.runtimes?.ffmpeg) && artifacts.some((artifact) => artifact.kind === 'annotated_video') && artifacts.some((artifact) => artifact.kind === 'semantic_overlay');
+  return (
+    <section className="stage-layout">
+<StageHeading eyebrow="STEP 05 / HUMAN AUTHORITY" title="最后的判断权，\n始终留给人。" description="专家核对交通接驳基线、AI 方案、复算结果和适用边界后，生成三维展示、分析表、汇报文件、展板与演示视频。" />
+      <div className="stage-content review-stage">
+        {testOnly && <div className="test-only-banner review-test-banner"><AlertTriangle size={16} /><span><strong>TEST ONLY / 验收项目</strong>本项目可以走完专家审核与导出链，但所有成果必须保留“虚拟测试，不是现场实施依据”标记。</span></div>}
+        <article className="panel release-board">
+          <PanelHeader icon={ShieldCheck} title="成果准备" />
+          <GateRow label="项目位置已确认" pass={Boolean(project)} />
+          <GateRow label="已导入项目资料" pass={assets.length > 0} />
+          <GateRow label="LLM 已连接，可生成方案" pass={Boolean(health?.llm?.configured)} />
+          <GateRow label="AI 草案已生成" pass={proposals.length > 0} />
+          <GateRow label="确定性复算已通过" pass={proposals.some((proposal) => proposal.simulationValidation?.status === 'passed')} />
+          <GateRow label="至少一个专家批准方案" pass={approved.length > 0} />
+          <div className="release-score"><span>发布就绪</span><strong>{[project, assets.length > 0, proposals.some((proposal) => proposal.simulationValidation?.status === 'passed'), approved.length > 0].filter(Boolean).length}<small>/4</small></strong></div>
+        </article>
 
+        <article className="panel review-queue">
+          <PanelHeader icon={Archive} title="专家审核队列" action={<span className="panel-count">{drafts.length} 项待审</span>} />
+          {drafts.length === 0 ? <EmptyLine text="没有待审方案" /> : drafts.map((proposal) => {
+            const review = reviewForms[proposal.id] || { reviewer: '', note: '' };
+            const simulationPassed = proposal.simulationValidation?.status === 'passed';
+            return <div className="review-row" key={proposal.id}>
+              <div className="review-summary"><span className={`status-chip ${simulationPassed ? 'ready' : 'blocked'}`}>{simulationPassed ? '复算已通过' : '需要复算'}</span><strong>{proposal.draft?.plans?.[0]?.name || proposal.id}</strong><small>{new Date(proposal.createdAt).toLocaleString('zh-CN')} · {proposal.simulationValidation?.violations?.join('；') || '指标已就绪'}</small></div>
+              <div className="review-actions"><button className="secondary-button" disabled={busy || simulationPassed} onClick={() => simulate(proposal)}><RefreshCw size={14} /> 确定性复算</button></div>
+              {simulationPassed && <div className="approval-form">
+                <label><span>审核人</span><input value={review.reviewer} maxLength={80} onChange={(event) => updateReview(proposal.id, 'reviewer', event.target.value)} placeholder="姓名或评审席位" /></label>
+                <label><span>审核意见</span><textarea value={review.note} maxLength={1000} onChange={(event) => updateReview(proposal.id, 'note', event.target.value)} placeholder="记录采纳理由、适用边界和后续复核要求" /></label>
+                <button className="primary-button" disabled={busy || !review.reviewer.trim() || !review.note.trim()} onClick={() => approve(proposal.id)}><ShieldCheck size={15} /> 专家批准</button>
+              </div>}
+            </div>;
+          })}
+          {approved.length > 0 && <div className="approved-records">{approved.slice(-3).reverse().map((proposal) => <div key={proposal.id}><CheckCircle2 size={14} /><p><strong>{proposal.review?.reviewer || '未记录审核人'}</strong><span>{proposal.review?.note || '未记录审核意见'}</span></p><small>{proposal.review?.approvedAt ? new Date(proposal.review.approvedAt).toLocaleString('zh-CN') : '时间未记录'}</small></div>)}</div>}
+        </article>
 
+        <article className="panel artifact-board">
+          <PanelHeader icon={FileDown} title="最终成果包" />
+          <div className="artifact-grid">
+            {[[ '可交互三维', '三维模型 · 网页展示', 'GLB · SPZ · GeoJSON', webglReady], ['分析数据', '统计表 · 轨迹 · 冲突记录', 'XLSX · CSV · JSON', Boolean(approvedProposal)], ['汇报文件', 'A3 汇报 · A1 展板', 'A3 PDF · A1 PNG/PDF', Boolean(approvedProposal)], ['演示资产', '1080p 演示视频 · 离线展示', '1080p MP4 · 离线包', demoReady]].map(([title, operatorDetail, expertDetail, ready]) => <button key={title} disabled={!ready} onClick={() => ready && exportApproved(approvedProposal)}><FileDown size={20} /><strong>{title}</strong><span className="operator-only">{operatorDetail}</span><span className="expert-only">{expertDetail}</span><small>{ready ? '生成真实成果' : approved.length ? '相关资料尚未准备完成' : '需要专家批准方案'}</small></button>)}
+          </div>
+          <div className="truth-banner"><ShieldCheck size={17} /><p><strong>真实输出原则</strong><span>只有完成对应分析和审核后才能导出；系统不生成空白 PDF、伪造视频或占位模型。</span></p></div>
+        </article>
 
+        <article className="panel audit-panel expert-only">
+          <PanelHeader icon={Database} title="证据链摘要" />
+          <dl className="audit-stats"><div><dt>源资产</dt><dd>{assets.length}</dd></div><div><dt>AI 草案</dt><dd>{proposals.length}</dd></div><div><dt>专家批准</dt><dd>{approved.length}</dd></div><div><dt>虚拟测试链</dt><dd className={testOnly ? 'test-count' : 'zero'}>{testOnly ? proposals.filter((proposal) => proposal.testOnly).length : 0}</dd></div></dl>
+        </article>
+      </div>
+      <StageFooter left="发布成果必须包含来源、版本、审核人与证据状态" actions={<button className="primary-button" disabled={!approvedProposal || busy} onClick={() => exportApproved(approvedProposal)}><FileDown size={16} /> 生成完整成果包</button>} />
+    </section>
+  );
+}
 
-
-
+function applySceneEnvironment(runtime, scenarioPoint, displayMode = 'day-night') {
+  if (!runtime) return;
+  if (typeof window !== 'undefined') {
+    window.__envTrace = window.__envTrace || [];
+    window.__envTrace.push({ mode: displayMode, hd: runtime.highDensitySiteModel, amb: runtime.ambient?.intensity, same: runtime.ambient === window.__spatialTwinRuntime?.ambient, t: Math.round(performance.now()) });
+  }
+  const { THREE, renderer, scene, ambient, key, hemisphere, ground, skyDome } = runtime;
+  const resetEnvironment = () => {
+    scene.fog = null;
+    if (ground) ground.visible = false;
+    if (skyDome) skyDome.visible = false;
+    renderer.shadowMap.enabled = false;
+    renderer.toneMappingExposure = 1;
+    if ('environmentIntensity' in scene) scene.environmentIntensity = 1;
+  };
+  if (displayMode === 'original') {
+    resetEnvironment();
+    const radius = Math.max(45, runtime.sceneRadius || 45);
+    const skyTop = new THREE.Color(0x83aebf);
+    const skyHorizon = new THREE.Color(0xdce6e5);
+    if (ground) {
+      ground.visible = runtime.sceneGroundEnabled !== false;
+      ground.material.color.setHex(0x62665f);
+      ground.material.roughness = 1;
+      ground.material.opacity = 1;
+    }
+    if (skyDome) {
+      skyDome.visible = true;
+      skyDome.scale.setScalar(radius * 10);
+      skyDome.material.uniforms.topColor.value.copy(skyTop);
+      skyDome.material.uniforms.bottomColor.value.copy(skyHorizon);
+    }
+    ambient.color.setHex(0xeaf3f4);
+    // 光比：高密度场地模型原先 ambient 0.48 + hemi 0.64 几乎把阴影填平，
+    // 这里压暗天光、抬高主光，让静态阴影真正读得出来（参照 handan-3d-city 的低天光 + 强直射）。
+    ambient.intensity = runtime.highDensitySiteModel ? 0.26 : 0.62;
+    if (hemisphere) {
+      hemisphere.color.setHex(0xd9eff5);
+      hemisphere.groundColor.setHex(0x4b5650);
+      hemisphere.intensity = runtime.highDensitySiteModel ? 0.42 : 0.72;
+    }
+    key.color.setHex(0xffefd2);
+    key.intensity = runtime.highDensitySiteModel ? 2.55 : 2.05;
+    key.position.set(radius * -0.42, radius * 0.75, radius * 0.58);
+    // 静态阴影：高密度场地模型不再整体关闭阴影。阴影贴图只在场景/光照变化时
+    // 重算一次（autoUpdate=false + needsUpdate），既让建筑落地，又不给集显加每帧负担。
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    renderer.toneMappingExposure = runtime.highDensitySiteModel ? 0.86 : 0.9;
+    if ('environmentIntensity' in scene) scene.environmentIntensity = runtime.highDensitySiteModel ? 0.5 : 0.78;
+    if (runtime.facadeReviewCandidate) {
+      ambient.color.setHex(0xffffff);
+      ambient.intensity = 0.52;
+      hemisphere.color.setHex(0xeaf3fa);
+      hemisphere.groundColor.setHex(0xc8ccc3);
+      hemisphere.intensity = 0.34;
+      key.intensity = 1.0;
+      renderer.toneMappingExposure = 0.82;
+      scene.environmentIntensity = 0.58;
+      renderer.shadowMap.enabled = false;
+    }
+    renderer.setClearColor(skyHorizon, 1);
+    scene.fog = new THREE.Fog(skyHorizon, radius * 4.2, radius * 13);
+    return;
+  }
+  if (displayMode === 'analysis') {
+    resetEnvironment();
+    if (ground) {
+      ground.visible = runtime.sceneGroundEnabled !== false;
+      ground.material.color.setHex(0x0a1a1d);
+      ground.material.roughness = 1;
+      ground.material.opacity = 1;
+    }
+    ambient.color.setHex(0xbceeff);
+    ambient.intensity = 1.08;
+    if (hemisphere) {
+      hemisphere.color.setHex(0x8deaff);
+      hemisphere.groundColor.setHex(0x071619);
+      hemisphere.intensity = 0.32;
+    }
+    key.color.setHex(0x8deaff);
+    key.intensity = 2.3;
+    key.position.set(8, 14, 5);
+    if ('environmentIntensity' in scene) scene.environmentIntensity = 0.3;
+    renderer.setClearColor(0x061114, 1);
+    return;
+  }
+  if (displayMode === 'sunny') {
+    const sunnyAltitude = Number(scenarioPoint?.sun?.altitude_deg);
+    const sunnyAzimuth = Number(scenarioPoint?.sun?.azimuth_deg);
+    const altitude = Number.isFinite(sunnyAltitude) && sunnyAltitude > 8 ? sunnyAltitude : 46;
+    const azimuth = Number.isFinite(sunnyAzimuth) ? sunnyAzimuth : 148;
+    const azimuthRadians = azimuth * Math.PI / 180;
+    const altitudeRadians = altitude * Math.PI / 180;
+    const radius = Math.max(45, runtime.sceneRadius || 45);
+    const skyTop = new THREE.Color(0x68b9f2);
+    const skyHorizon = new THREE.Color(0xe6f3ff);
+    const skyColor = skyHorizon.clone().lerp(skyTop, Math.max(.28, Math.min(.82, altitude / 75)));
+    renderer.setClearColor(skyColor, 1);
+     renderer.toneMappingExposure = runtime.highDensitySiteModel ? .78 : .96;
+     if ('environmentIntensity' in scene) scene.environmentIntensity = runtime.highDensitySiteModel ? .58 : 1.05;
+    renderer.shadowMap.enabled = !runtime.highDensitySiteModel || runtime.hasSelectiveSiteShadows;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    ambient.color.setHex(0xffffff);
+     ambient.intensity = runtime.highDensitySiteModel ? .38 : .52;
+    if (hemisphere) {
+      hemisphere.color.setHex(0xbfe3ff);
+      hemisphere.groundColor.setHex(0x79877d);
+       hemisphere.intensity = runtime.highDensitySiteModel ? .5 : .96;
+    }
+    key.color.setHex(0xfff0cf);
+     key.intensity = runtime.highDensitySiteModel ? 1.7 : 3.1;
+    key.position.set(
+      Math.sin(azimuthRadians) * Math.cos(altitudeRadians) * radius,
+      Math.max(12, Math.sin(altitudeRadians) * radius),
+      Math.cos(azimuthRadians) * Math.cos(altitudeRadians) * radius
+    );
+    key.target.position.set(0, runtime.groundY || 0, 0);
+    key.target.updateMatrixWorld();
