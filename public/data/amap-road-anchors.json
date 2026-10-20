@@ -1,0 +1,430 @@
+{
+ "meta": {
+  "method": "geo-anchored v3: px->GCJ->WGS->ENU rel OSM TongjiDesignInstitute centroid, main-building anchor (-2.4,-1.5) measured from live scene (fixed 40m z offset), no rotation, in-footprint points pushed outside | 2026-10-20 re-anchor: snapped to Overpass OSM service/residential centerlines (bbox 31.2795,121.4985,31.2855,121.5070), localPrev keeps pre-snap values, original file backup amap-road-anchors.backup-20261020.json",
+  "evidence": "Observed"
+ },
+ "points": [
+  {
+   "id": "road_1",
+   "name": "小路1",
+   "mapPx": [
+    586,
+    453
+   ],
+   "trueDirectionLocal": [
+    -134.8,
+    94.9
+   ],
+   "trueDistanceM": 133.4,
+   "local": [
+    -127.1,
+    -34.9
+   ],
+   "wgs": [
+    121.501319,
+    31.282211
+   ],
+   "snapM": 7.8,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    -129.5,
+    -42.3
+   ],
+   "snapWgs": [
+    121.501344,
+    31.282278
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_2",
+   "name": "小路2",
+   "mapPx": [
+    623,
+    446
+   ],
+   "trueDirectionLocal": [
+    -103.6,
+    72.3
+   ],
+   "trueDistanceM": 95.2,
+   "local": [
+    -95.6,
+    -27.5
+   ],
+   "wgs": [
+    121.501717,
+    31.282276
+   ],
+   "snapM": 8.6,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    -91.5,
+    -35.0
+   ],
+   "snapWgs": [
+    121.501674,
+    31.282344
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_3",
+   "name": "小路3",
+   "mapPx": [
+    632,
+    485
+   ],
+   "trueDirectionLocal": [
+    -78.4,
+    104.5
+   ],
+   "trueDistanceM": 108.4,
+   "local": [
+    -69.3,
+    -35.9
+   ],
+   "wgs": [
+    121.501814,
+    31.281919
+   ],
+   "snapM": 40.9,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    -82.3,
+    -74.7
+   ],
+   "snapWgs": [
+    121.501951,
+    31.28227
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_4",
+   "name": "小路4",
+   "mapPx": [
+    654,
+    384
+   ],
+   "trueDirectionLocal": [
+    -101.9,
+    1.6
+   ],
+   "trueDistanceM": 64.7,
+   "local": [
+    -98.2,
+    48.8
+   ],
+   "wgs": [
+    121.502051,
+    31.282845
+   ],
+   "snapM": 9.5,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    -90.0,
+    44.1
+   ],
+   "snapWgs": [
+    121.501964,
+    31.282888
+   ],
+   "snapOsmWay": 1106846545
+  },
+  {
+   "id": "road_5",
+   "name": "小路5",
+   "mapPx": [
+    751,
+    363
+   ],
+   "trueDirectionLocal": [
+    -21.4,
+    -59.9
+   ],
+   "trueDistanceM": 66.6,
+   "local": [
+    49.0,
+    57.6
+   ],
+   "wgs": [
+    121.503095,
+    31.283041
+   ],
+   "snapM": 7.2,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    51.2,
+    64.5
+   ],
+   "snapWgs": [
+    121.503072,
+    31.282979
+   ],
+   "snapOsmWay": 1106843556
+  },
+  {
+   "id": "road_6",
+   "name": "小路6",
+   "mapPx": [
+    775,
+    497
+   ],
+   "trueDirectionLocal": [
+    59.0,
+    53.5
+   ],
+   "trueDistanceM": 107.9,
+   "local": [
+    71.4,
+    -91.2
+   ],
+   "wgs": [
+    121.503354,
+    31.281814
+   ],
+   "snapM": 8.6,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    64.2,
+    -86.5
+   ],
+   "snapWgs": [
+    121.50343,
+    31.281772
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_7",
+   "name": "小路7",
+   "mapPx": [
+    804,
+    449
+   ],
+   "trueDirectionLocal": [
+    64.9,
+    -3.4
+   ],
+   "trueDistanceM": 102.7,
+   "local": [
+    96.3,
+    -38.9
+   ],
+   "wgs": [
+    121.503666,
+    31.282254
+   ],
+   "snapM": 2.8,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    93.9,
+    -37.4
+   ],
+   "snapWgs": [
+    121.503691,
+    31.28224
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_8",
+   "name": "小路8",
+   "mapPx": [
+    840,
+    415
+   ],
+   "trueDirectionLocal": [
+    83.4,
+    -50.5
+   ],
+   "trueDistanceM": 133.1,
+   "local": [
+    130.1,
+    -4.4
+   ],
+   "wgs": [
+    121.504053,
+    31.282567
+   ],
+   "snapM": 1.9,
+   "osmRoad": "service",
+   "inModel": true,
+   "excluded": false,
+   "localPrev": [
+    130.7,
+    -2.6
+   ],
+   "snapWgs": [
+    121.504047,
+    31.282551
+   ],
+   "snapOsmWay": 1106846544
+  },
+  {
+   "id": "road_9",
+   "name": "小路9",
+   "mapPx": [
+    844,
+    463
+   ],
+   "trueDirectionLocal": [
+    108.0,
+    -7.8
+   ],
+   "trueDistanceM": 146.1,
+   "local": [
+    134.8,
+    -51.5
+   ],
+   "wgs": [
+    121.504097,
+    31.282127
+   ],
+   "snapM": 5.4,
+   "osmRoad": "阜新路",
+   "inModel": false,
+   "excluded": true
+  },
+  {
+   "id": "road_10",
+   "name": "小路10",
+   "mapPx": [
+    876,
+    399
+   ],
+   "trueDirectionLocal": [
+    109.8,
+    -80.9
+   ],
+   "trueDistanceM": 170.7,
+   "local": [
+    167.6,
+    13.9
+   ],
+   "wgs": [
+    121.504441,
+    31.282715
+   ],
+   "snapM": 6.9,
+   "osmRoad": "residential",
+   "inModel": false,
+   "excluded": true
+  },
+  {
+   "id": "road_11",
+   "name": "小路11",
+   "mapPx": [
+    893,
+    332
+   ],
+   "trueDirectionLocal": [
+    96.4,
+    -150.1
+   ],
+   "trueDistanceM": 205.3,
+   "local": [
+    185.0,
+    82.3
+   ],
+   "wgs": [
+    121.504624,
+    31.28333
+   ],
+   "snapM": 4.2,
+   "osmRoad": "阜新路",
+   "inModel": false,
+   "excluded": true
+  },
+  {
+   "id": "road_12",
+   "name": "小路12",
+   "mapPx": [
+    837,
+    293
+   ],
+   "trueDirectionLocal": [
+    27.7,
+    -161.9
+   ],
+   "trueDistanceM": 179.3,
+   "local": [
+    127.7,
+    121.9
+   ],
+   "wgs": [
+    121.504021,
+    31.283685
+   ],
+   "snapM": 0.9,
+   "osmRoad": "彰武路",
+   "inModel": false,
+   "excluded": true
+  },
+  {
+   "id": "road_13",
+   "name": "小路13",
+   "mapPx": [
+    682,
+    230
+   ],
+   "trueDirectionLocal": [
+    -142.8,
+    -152.8
+   ],
+   "trueDistanceM": 189.3,
+   "local": [
+    -31.1,
+    185.6
+   ],
+   "wgs": [
+    121.502352,
+    31.284258
+   ],
+   "snapM": 4.2,
+   "osmRoad": "彰武路",
+   "inModel": false,
+   "excluded": true
+  },
+  {
+   "id": "road_14",
+   "name": "小路14",
+   "mapPx": [
+    741,
+    222
+   ],
+   "trueDirectionLocal": [
+    -91.8,
+    -185.8
+   ],
+   "trueDistanceM": 198.0,
+   "local": [
+    29.3,
+    194.0
+   ],
+   "wgs": [
+    121.502987,
+    31.284333
+   ],
+   "snapM": 27.2,
+   "osmRoad": "彰武路",
+   "inModel": false,
+   "excluded": true
+  }
+ ]
+}
