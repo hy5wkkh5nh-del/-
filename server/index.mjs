@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 65764)
-Total output lines: 4520
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -1816,7 +1813,1102 @@ async function runSiteCorridorJob(job, videoAssets, mainBuildingArtifact, option
         || corridor.scene?.building_registration?.interiorModelIncludedInSiteContext === true
         || Number(corridor.scene?.building_registration?.sourceGeometryAddedNodeCount || 0) > 0
       ),
-      mainBuildingInteriorIncludedInSi…15764 tokens truncated…e.hasOwnProperty.call(req.body || {}, 'status');
+      mainBuildingInteriorIncludedInSiteContext: corridor.scene?.building_registration?.interiorModelIncludedInSiteContext === true,
+      mainBuildingInteriorSeparate: corridor.scene?.building_registration?.interiorModelSeparate === true
+        || corridor.scene?.building_registration?.interiorModelKeptAsSeparateArtifact === true,
+      staticRepresentativeVehicles: corridor.counts?.staticRepresentativeVehicles || 0,
+      detailCounts: corridor.scene?.detail_counts || {},
+      ...(() => {
+        const split = classifyCurrentSiteDetailCounts(corridor.scene?.detail_counts || {});
+        return {
+          currentStateDetailCounts: split.currentState,
+          historicalConstructionDetailCounts: split.historicalConstruction,
+          currentStatePolicy: '施工围挡、塔吊、临时框架只保留为历史证据；现状展示默认隐藏，不参与现状空间分析。'
+        };
+      })(),
+      blenderRefined: Boolean(blenderRefinement),
+      blenderVersion: blenderRefinement?.blenderVersion || null,
+      ...currentSupplementalReferenceMetadata,
+      stale: false
+    };
+    const artifactDefinitions = [
+      ['site_context_glb', blenderRefinement ? 'Blender 精修建筑周边小道 GLB' : '连续视频建筑周边小道 GLB', finalSiteContextPath, 'Hypothesis'],
+      ...(corridor.outputs.interior_model_glb ? [
+        ['site_interior_model_glb', '主建筑独立室内 CAD/BIM GLB', corridor.outputs.interior_model_glb, 'Derived']
+      ] : []),
+      ...(blenderRefinement ? [
+        ['site_context_source_glb', 'Blender 精修前周边小道源 GLB', corridor.outputs.site_context_glb, 'Hypothesis'],
+        ['site_context_blend', '建筑周边场景 Blender 可编辑源文件', blenderRefinement.outputs.blend, 'Hypothesis'],
+        ['site_context_blender_preview', '建筑周边场景 Blender 晴天预览', blenderRefinement.outputs.preview, 'Hypothesis'],
+        ['site_context_blender_manifest', '建筑周边场景 Blender 精修清单', blenderRefinement.outputs.manifest, 'Derived']
+      ] : []),
+      ['site_route_geojson', '建筑周边小道米制路线 GeoJSON', corridor.outputs.route_geojson, 'Hypothesis'],
+      ['site_camera_track_json', '连续视频相机轨迹 JSON', corridor.outputs.camera_track_json, 'Hypothesis'],
+      ['site_keyframes_manifest', '连续视频关键帧与哈希清单', corridor.outputs.keyframes_manifest_json, 'Derived'],
+      ['site_keyframes_zip', '连续视频关键帧 ZIP', corridor.outputs.keyframes_zip, 'Observed'],
+      ['site_boundary_registration', '六处片段边界配准清单', corridor.outputs.boundary_registration_json, 'Hypothesis'],
+      ['site_material_manifest', '周边小道近似 PBR 材质清单', corridor.outputs.materials_manifest_json, 'Hypothesis'],
+      ['site_detail_manifest', '周边环境设施与视频证据清单', corridor.outputs.details_manifest_json, 'Hypothesis'],
+      ['site_field_evidence_manifest', '补充照片与固定机位视频证据清单', corridor.outputs.field_evidence_manifest_json, 'Derived'],
+      ...(corridor.outputs.panorama_sampling_manifest_json ? [['site_panorama_sampling_manifest', '约10米全景采样与双通道校正清单', corridor.outputs.panorama_sampling_manifest_json, 'Derived']] : []),
+      ['site_registration_manifest', '主楼、路线与地理锚点配准清单', corridor.outputs.registration_manifest_json, 'Hypothesis'],
+      ...(corridor.outputs.capture_station_register_json ? [['site_capture_station_register', '采景站点与跨批次空间身份登记', corridor.outputs.capture_station_register_json, 'Derived']] : []),
+      ['site_corridor_preview', '连续视频小道重建预览图', corridor.outputs.preview_png, 'Hypothesis'],
+      ['site_corridor_manifest', '连续视频小道重建总清单', corridor.outputs.manifest_json, 'Hypothesis'],
+      ['site_master_ledger', '19条问题与验收总控台账', jobLedgerPath, 'Derived']
+    ];
+    for (const [kind, _title, storedPath] of artifactDefinitions) {
+      const resolvedOutput = path.resolve(String(storedPath || ''));
+      if (!storedPathIsInside(resolvedOutput, jobDir)) {
+        throw Object.assign(new Error(`连续小道输出路径越界: ${kind}`), { code: 'SITE_CORRIDOR_OUTPUT_INVALID' });
+      }
+      const outputStat = await fsp.stat(resolvedOutput).catch(() => null);
+      if (!outputStat?.isFile()) {
+        throw Object.assign(new Error(`连续小道缺少输出文件: ${kind}`), { code: 'SITE_CORRIDOR_OUTPUT_MISSING' });
+      }
+    }
+    const producedArtifacts = [];
+    for (const [kind, title, storedPath, evidenceLevel] of artifactDefinitions) {
+      const buildingMetadata = mainBuildingArtifact?.metadata || {};
+      const artifact = await addArtifact({
+        projectId: project.id,
+        jobId: job.id,
+        kind,
+        title,
+        storedPath,
+        evidenceLevel,
+        metadata: {
+          ...commonMetadata,
+          ...(kind === 'site_context_glb' ? {
+            geometryCount: blenderRefinement?.meshCount ?? corridor.scene?.geometry_count,
+            outputBytes: (await fsp.stat(finalSiteContextPath)).size,
+            mainBuildingHalfExtentsM: corridor.scene?.building_half_extents_m || null,
+            mainBuildingHeightM: corridor.scene?.building_height_m ?? null,
+            exteriorShellOnly: corridor.scene?.exterior_shell_only === true,
+            exteriorShellPolicy: corridor.scene?.exterior_shell_only === true
+              ? '周边场景只显示主楼外壳；CAD室内墙、柱、家具和语义对象保留在独立室内模型中。'
+              : null,
+            georeferenced: false,
+            axes: 'Y-up GLB',
+            buildingSchema: buildingMetadata.schema || null,
+            buildingAxes: buildingMetadata.axes || null,
+            wallHeightM: buildingMetadata.wallHeightM ?? null,
+            floorSlabThicknessM: buildingMetadata.floorSlabThicknessM ?? null,
+            floorCount: buildingMetadata.floorCount ?? buildingMetadata.levelCount ?? null,
+            levelCount: buildingMetadata.levelCount ?? buildingMetadata.floorCount ?? null,
+            levels: Array.isArray(buildingMetadata.levels) ? buildingMetadata.levels : [],
+            openingCounts: buildingMetadata.openingCounts || null,
+            resolvedOpeningCounts: buildingMetadata.resolvedOpeningCounts || null,
+            windowFrameCount: buildingMetadata.windowFrameCount ?? null,
+            selectedFurnitureCount: buildingMetadata.selectedFurnitureCount ?? null,
+            selectedSemanticObjectCount: buildingMetadata.selectedSemanticObjectCount ?? null,
+            categoryCounts: buildingMetadata.categoryCounts || {},
+            semanticLegend: buildingMetadata.semanticLegend || {},
+            blenderRefinement: blenderRefinement ? {
+              schema: blenderRefinement.schema,
+              blenderVersion: blenderRefinement.blenderVersion,
+              sourceSha256: blenderRefinement.sourceSha256,
+              outputSha256: blenderRefinement.outputSha256,
+              bevelAppliedCount: blenderRefinement.refinement?.bevelAppliedCount || 0,
+              smoothObjectCount: blenderRefinement.refinement?.smoothObjectCount || 0,
+              tunedMaterialCount: blenderRefinement.tunedMaterialCount || 0,
+              materialProfiles: blenderRefinement.materialProfiles || {},
+              geometryEvidenceLevel: blenderRefinement.geometryEvidenceLevel,
+              materialFinishEvidenceLevel: blenderRefinement.materialFinishEvidenceLevel,
+              dataGaps: blenderRefinement.dataGaps || []
+            } : null
+          } : {}),
+          ...(kind === 'site_interior_model_glb' ? {
+            geometryCount: corridor.scene?.building_registration?.interiorModelNodeCount
+              ?? corridor.scene?.building_registration?.sourceGeometryNodeCount
+              ?? null,
+            outputBytes: (await fsp.stat(storedPath)).size,
+            interiorModel: true,
+            exteriorShellOnly: false,
+            interiorModelIncludedInSiteContext: false,
+            interiorModelSeparate: true,
+            sourceGeometryPreserved: corridor.scene?.building_registration?.sourceGeometryPreserved === true,
+            sourceGeometryNodeCount: corridor.scene?.building_registration?.sourceGeometryNodeCount ?? null,
+            axes: 'Y-up GLB',
+            buildingSchema: buildingMetadata.schema || null,
+            buildingAxes: buildingMetadata.axes || null,
+            wallHeightM: buildingMetadata.wallHeightM ?? null,
+            floorSlabThicknessM: buildingMetadata.floorSlabThicknessM ?? null,
+            floorCount: buildingMetadata.floorCount ?? buildingMetadata.levelCount ?? null,
+            levelCount: buildingMetadata.levelCount ?? buildingMetadata.floorCount ?? null,
+            levels: Array.isArray(buildingMetadata.levels) ? buildingMetadata.levels : [],
+            openingCounts: buildingMetadata.openingCounts || null,
+            resolvedOpeningCounts: buildingMetadata.resolvedOpeningCounts || null,
+            windowFrameCount: buildingMetadata.windowFrameCount ?? null,
+            selectedFurnitureCount: buildingMetadata.selectedFurnitureCount ?? null,
+            selectedSemanticObjectCount: buildingMetadata.selectedSemanticObjectCount ?? null,
+            categoryCounts: buildingMetadata.categoryCounts || {},
+            semanticLegend: buildingMetadata.semanticLegend || {}
+          } : {})
+        }
+      });
+      producedArtifacts.push(artifact);
+      producedArtifactIds.add(artifact.id);
+    }
+    const routeArtifact = producedArtifacts.find((artifact) => artifact.kind === 'site_route_geojson');
+    const routeDocument = JSON.parse(await fsp.readFile(corridor.outputs.route_geojson, 'utf8'));
+    const routeFeatures = (routeDocument.features || [])
+      .filter((feature) => ['site_walkway_route', 'site_context_panorama_outer_lane', 'site_return_route_to_two_gates'].includes(feature?.properties?.role))
+      .filter((feature) => feature?.geometry?.type === 'LineString' && Array.isArray(feature.geometry.coordinates) && feature.geometry.coordinates.length >= 2);
+    if (!routeFeatures.length) throw new Error('路线 GeoJSON 缺少有效的 site_walkway_route LineString');
+    const routeObjects = routeFeatures.map((routeFeature) => {
+      const routeId = String(routeFeature.id || `site-walkway-route-${routeFeatures.indexOf(routeFeature) + 1}`);
+      const existingObject = store.sceneObjects.find((item) => item.projectId === project.id && item.id === routeId);
+      const routeRole = routeFeature.properties?.role || 'site_walkway_route';
+      const displayContinuity = routeFeature.properties?.displayContinuity || 'single_continuous_route';
+      const label = routeRole === 'site_return_route_to_two_gates'
+        ? '第二岔路口返回两个门的连续小道'
+        : routeId === 'site-walkway-route-main'
+        ? '建筑周边连续主路线'
+        : routeRole === 'site_context_panorama_outer_lane' || displayContinuity === 'separate_parallel_context_lane'
+          ? '栅栏外侧全景平行小道'
+          : String(routeFeature.properties?.label || routeFeature.properties?.detail || routeId);
+      const routeObject = {
+        id: routeId,
+        projectId: project.id,
+        type: 'walkway',
+        label,
+        geometry: routeFeature.geometry,
+        properties: {
+          ...(routeFeature.properties || {}),
+          role: routeRole === 'site_return_route_to_two_gates' ? 'site_return_route_to_two_gates' : 'site_walkway_route',
+          routeRole,
+          coordinateSpace: 'local_enu_m',
+          source: routeFeature.properties?.source || 'annotated_map_screenshot_plus_ordered_field_videos',
+          sourceArtifactId: routeArtifact.id,
+          anchorHash,
+          registrationVersion: corridor.schema,
+          stale: false
+        },
+        evidenceLevel: routeFeature.properties?.evidenceLevel || 'Hypothesis',
+        sourceAssetIds: Array.isArray(routeFeature.properties?.sourceAssetIds)
+          ? routeFeature.properties.sourceAssetIds
+          : videoAssets.map((asset) => asset.id),
+        createdAt: existingObject?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      return routeObject;
+    });
+    const routeObject = routeObjects.find((item) => item.id === 'site-walkway-route-main') || routeObjects[0];
+
+    const siteContextArtifact = producedArtifacts.find((artifact) => artifact.kind === 'site_context_glb');
+    const currentOsmContext = [...recordsForProject(store.artifacts, project.id)].reverse()
+      .find((artifact) => artifact.kind === 'osm_context_glb' && artifact.metadata?.stale !== true);
+    if (storedProject && mainBuildingArtifact && currentOsmContext && siteContextArtifact) {
+      const previousRegistration = storedProject.modelRegistration || {};
+      const preserveTransform = previousRegistration.contextArtifactId === currentOsmContext.id
+        && previousRegistration.modelArtifactId === mainBuildingArtifact.id;
+      nextModelRegistration = {
+        modelArtifactId: mainBuildingArtifact.id,
+        contextArtifactId: currentOsmContext.id,
+        siteContextArtifactId: siteContextArtifact.id,
+        offsetXM: preserveTransform ? Number(previousRegistration.offsetXM || 0) : 0,
+        offsetZM: preserveTransform ? Number(previousRegistration.offsetZM || 0) : 0,
+        rotationDeg: preserveTransform ? Number(previousRegistration.rotationDeg || 0) : 0,
+        scale: preserveTransform ? Number(previousRegistration.scale || 1) : 1,
+        evidenceLevel: 'Hypothesis',
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    // Commit only after every artifact, route and registration input has been
+    // validated.  This is the single point where the previous active result is
+    // retired, so a failure above leaves it visible and addressable.
+    registrationCommitStarted = true;
+    const staleAt = new Date().toISOString();
+    for (const artifact of store.artifacts) {
+      if (!previousCorridorArtifactIds.has(artifact.id)) continue;
+      artifact.metadata = { ...(artifact.metadata || {}), stale: true, staleReason: 'superseded_by_new_site_corridor', staleAt };
+    }
+    const routeObjectById = new Map(routeObjects.map((object) => [object.id, object]));
+    for (const [index, object] of store.sceneObjects.entries()) {
+      if (object.projectId !== project.id || !routeRoles.has(object.properties?.role)) continue;
+      const replacement = routeObjectById.get(object.id);
+      if (replacement) store.sceneObjects[index] = replacement;
+    }
+    const existingRouteIds = new Set(store.sceneObjects
+      .filter((object) => object.projectId === project.id && routeRoles.has(object.properties?.role) && object.properties?.stale !== true)
+      .map((object) => object.id));
+    for (const object of routeObjects) {
+      if (!existingRouteIds.has(object.id)) store.sceneObjects.push(object);
+    }
+    if (storedProject && nextModelRegistration) {
+      storedProject.modelRegistration = nextModelRegistration;
+      storedProject.updatedAt = new Date().toISOString();
+      if (store.activeProjectId === storedProject.id) store.project = storedProject;
+    }
+    registrationCommitted = true;
+
+    job.output = {
+      schema: corridor.schema,
+      routeObjectId: routeObject.id,
+      routeLengthM: corridor.routeLengthM,
+      alignmentStatus: corridor.alignmentStatus,
+      surveyGrade: false,
+      counts: corridor.counts,
+      blenderRefinement: blenderRefinement ? {
+        schema: blenderRefinement.schema,
+        blenderVersion: blenderRefinement.blenderVersion,
+        bevelAppliedCount: blenderRefinement.refinement?.bevelAppliedCount || 0,
+        smoothObjectCount: blenderRefinement.refinement?.smoothObjectCount || 0,
+        tunedMaterialCount: blenderRefinement.tunedMaterialCount || 0
+      } : null,
+      artifacts: producedArtifacts.map(publicArtifact)
+    };
+    job.status = 'succeeded';
+    job.stage = 'completed';
+    job.progress = 100;
+    job.completedAt = new Date().toISOString();
+    for (const artifact of producedArtifacts) emitJobEvent(job.id, 'artifact.created', { artifactId: artifact.id, kind: artifact.kind, title: artifact.title });
+    emitJobEvent(job.id, 'job.completed', { outputSummary: `${blenderRefinement ? 'Blender 精修 GLB' : '连续小道 GLB'} 与 ${Math.round(corridor.routeLengthM || 0)}m 米制路线已生成；状态为近似配准` });
+  } catch (error) {
+    // Remove partially registered artifacts on every failure. If the commit
+    // crossed the retirement point, restore the complete prior active set as
+    // well, including route objects and project registration.
+    if (producedArtifactIds.size) {
+      store.artifacts = store.artifacts.filter((artifact) => !producedArtifactIds.has(artifact.id));
+    }
+    if (registrationCommitStarted || registrationCommitted) {
+      const previousRouteIds = new Set(previousRouteObjects.map((object) => object.id));
+      store.sceneObjects = store.sceneObjects.filter((object) => {
+        if (object.projectId !== project.id) return true;
+        if (previousRouteIds.has(object.id)) return false;
+        return !producedArtifactIds.has(object.properties?.sourceArtifactId);
+      });
+      store.sceneObjects.push(...previousRouteObjects.map(cloneStoreRecord));
+      for (const snapshot of store.artifacts) {
+        if (!previousCorridorArtifactIds.has(snapshot.id)) continue;
+        const previous = previousCorridorArtifacts.find((artifact) => artifact.id === snapshot.id);
+        if (previous) Object.assign(snapshot, cloneStoreRecord(previous));
+      }
+    }
+    if (storedProject) {
+      if (previousModelRegistration === undefined) delete storedProject.modelRegistration;
+      else storedProject.modelRegistration = cloneStoreRecord(previousModelRegistration);
+      if (previousProjectUpdatedAt === undefined) delete storedProject.updatedAt;
+      else storedProject.updatedAt = previousProjectUpdatedAt;
+      if (store.activeProjectId === storedProject.id) store.project = storedProject;
+    }
+    job.status = 'failed';
+    job.error = error.message;
+    job.diagnostics = [...(job.diagnostics || []), error.message];
+    job.completedAt = new Date().toISOString();
+    emitJobEvent(job.id, 'step.failed', { stepId: job.stage || 'site_corridor', error: error.message, recoverable: true });
+  }
+  await persist();
+}
+
+async function runSemanticExtractionJob(job, asset, labels, thresholds) {
+  const project = projectForJob(job);
+  const sourceNature = inferredSourceNature(asset);
+  const testOnly = sourceNature === 'virtual_test';
+  const jobDir = path.join(artifactDir, job.id);
+  await fsp.mkdir(jobDir, { recursive: true });
+  job.status = 'running';
+  job.stage = 'grounding_dino';
+  job.startedAt = new Date().toISOString();
+  await persist();
+  emitJobEvent(job.id, 'step.started', { stepId: 'grounding_dino', title: 'Grounding DINO 文本引导检测' });
+  try {
+    const worker = path.join(rootDir, 'workers', 'semantic_worker.py');
+    const result = await runProcess(pythonCommand(), [
+      worker,
+      '--image', asset.storedPath,
+      '--grounding-model', groundingDinoModel,
+      '--sam2-model', sam2Model,
+      '--labels-json', JSON.stringify(labels),
+      '--output-dir', jobDir,
+      '--box-threshold', String(thresholds.box),
+      '--text-threshold', String(thresholds.text),
+      '--max-detections', String(thresholds.maxDetections),
+      '--device', String(process.env.SEMANTIC_DEVICE || 'auto')
+    ]);
+    const payload = lastJsonLine(result.stdout) || lastJsonLine(result.stderr);
+    if (result.code !== 0 || !payload?.ok) throw new Error(payload?.error || result.stderr.trim() || '语义识别 Worker 失败');
+    const semantic = payload.result;
+    job.stage = 'sam2';
+    emitJobEvent(job.id, 'tool.completed', { name: 'grounding_dino', outputSummary: `${semantic.count} 个文本引导候选框` });
+    emitJobEvent(job.id, 'step.started', { stepId: 'sam2', title: 'SAM 2 生成逐对象掩膜' });
+    const overlayArtifact = await addArtifact({
+      projectId: project.id, jobId: job.id, kind: 'semantic_overlay', title: 'Grounding DINO + SAM 2 语义叠加图',
+      storedPath: semantic.outputs.overlay, evidenceLevel: 'Derived',
+      metadata: { schema: semantic.schema, sourceAssetId: asset.id, sourceNature, testOnly, count: semantic.count, labels, coordinateSpace: semantic.coordinate_space, models: semantic.models, thresholds: semantic.thresholds, dataGaps: semantic.data_gaps }
+    });
+    const detectionsArtifact = await addArtifact({
+      projectId: project.id, jobId: job.id, kind: 'semantic_candidates', title: '二维语义候选 JSON',
+      storedPath: semantic.outputs.detections, evidenceLevel: 'Derived',
+      metadata: { schema: 'semantic_candidates.v1', sourceAssetId: asset.id, sourceNature, testOnly, count: semantic.count, coordinateSpace: semantic.coordinate_space }
+    });
+    const manifestArtifact = await addArtifact({
+      projectId: project.id, jobId: job.id, kind: 'semantic_manifest', title: '语义识别模型与哈希清单',
+      storedPath: semantic.manifest, evidenceLevel: 'Derived', metadata: { schema: semantic.schema, sourceAssetId: asset.id, sourceNature, testOnly, hashes: semantic.hashes }
+    });
+    const detectionsPayload = JSON.parse(await fsp.readFile(semantic.outputs.detections, 'utf8'));
+    const candidates = (detectionsPayload.detections || []).map((candidate) => ({
+      ...candidate,
+      projectId: project.id,
+      sourceAssetId: asset.id,
+      sourceNature,
+      testOnly,
+      jobId: job.id,
+      overlayArtifactId: overlayArtifact.id,
+      status: 'candidate_2d',
+      evidenceLevel: 'Derived',
+      createdAt: new Date().toISOString()
+    }));
+    store.semanticCandidates = store.semanticCandidates.filter((item) => item.jobId !== job.id).concat(candidates);
+    job.output = {
+      count: semantic.count,
+      labels,
+      sourceNature,
+      testOnly,
+      coordinateSpace: semantic.coordinate_space,
+      dataGaps: semantic.data_gaps,
+      candidateIds: candidates.map((candidate) => candidate.id),
+      artifacts: [overlayArtifact, detectionsArtifact, manifestArtifact].map(publicArtifact)
+    };
+    job.status = 'succeeded';
+    job.stage = 'completed';
+    job.progress = 100;
+    job.completedAt = new Date().toISOString();
+    emitJobEvent(job.id, 'tool.completed', { name: 'sam2', outputSummary: `${semantic.count} 个二维掩膜候选；尚未映射三维` });
+    for (const artifact of [overlayArtifact, detectionsArtifact, manifestArtifact]) {
+      emitJobEvent(job.id, 'artifact.created', { artifactId: artifact.id, kind: artifact.kind, title: artifact.title });
+    }
+    emitJobEvent(job.id, 'job.completed', { outputSummary: `已生成 ${semantic.count} 个真实二维语义候选，等待人工/标定映射` });
+  } catch (error) {
+    job.status = 'failed';
+    job.error = error.message;
+    job.diagnostics = [...(job.diagnostics || []), error.message];
+    job.completedAt = new Date().toISOString();
+    emitJobEvent(job.id, 'step.failed', { stepId: job.stage || 'grounding_dino', error: error.message, recoverable: true });
+  }
+  await persist();
+}
+
+async function runCadConversionJob(job, asset) {
+  const project = projectForJob(job);
+  const jobDir = path.join(artifactDir, job.id);
+  await fsp.mkdir(jobDir, { recursive: true });
+  job.status = 'running';
+  job.stage = 'source_parse';
+  job.startedAt = new Date().toISOString();
+  asset.status = 'processing';
+  await persist();
+  emitJobEvent(job.id, 'job.started', { title: `${job.sourceFormat.toUpperCase()} 真实转换` });
+  emitJobEvent(job.id, 'step.started', { stepId: 'source_parse', title: `解析 ${asset.name}` });
+  try {
+    const sourceMetadata = { sourceAssetId: asset.id, sourceAssetName: asset.name, sourceSha256: asset.sha256 };
+    const artifacts = [];
+    let result;
+    let lastStage = '';
+    const onProgress = (progress = {}) => {
+      const stage = String(progress.stage || 'source_parse');
+      job.stage = stage;
+      if (Number.isFinite(progress.current) && Number.isFinite(progress.total) && progress.total > 0) {
+        job.progress = Math.max(1, Math.min(92, Math.round(progress.current / progress.total * 90)));
+      }
+      if (stage !== lastStage) {
+        lastStage = stage;
+        emitJobEvent(job.id, 'step.started', { stepId: stage, title: progress.message || `执行 ${stage}` });
+      }
+    };
+    if (job.sourceFormat === 'skp') {
+      const glbPath = path.join(jobDir, `${path.parse(asset.name).name}.glb`);
+      result = await convertSkpToGlb({ inputPath: asset.storedPath, outputPath: glbPath, onProgress });
+      const artifact = await addArtifact({
+        projectId: project.id, jobId: job.id, kind: 'skp_glb',
+        title: `${path.parse(asset.name).name} · SKP 网页三维模型`, storedPath: glbPath,
+        evidenceLevel: 'Derived', metadata: { ...sourceMetadata, ...result }
+      });
+      artifacts.push(artifact);
+    } else if (job.sourceFormat === 'dwg') {
+      const baseName = path.parse(asset.name).name;
+      const glbPath = path.join(jobDir, `${baseName}-plan.glb`);
+      const geojsonPath = path.join(jobDir, `${baseName}-plan.geojson`);
+      result = await convertDwgToPlan({ inputPath: asset.storedPath, glbPath, geojsonPath, onProgress });
+      const glbArtifact = await addArtifact({
+        projectId: project.id, jobId: job.id, kind: 'dwg_plan_glb',
+        title: `${baseName} · DWG 平面校核层`, storedPath: glbPath,
+        evidenceLevel: 'Derived', metadata: { ...sourceMetadata, ...result }
+      });
+      const geojsonArtifact = await addArtifact({
+        projectId: project.id, jobId: job.id, kind: 'dwg_plan_geojson',
+        title: `${baseName} · DWG 分层线稿 GeoJSON`, storedPath: geojsonPath,
+        evidenceLevel: 'Derived', metadata: { ...sourceMetadata, ...result, schema: 'cad_plan_reference.v1' }
+      });
+      artifacts.push(glbArtifact, geojsonArtifact);
+    } else {
+      throw new Error(`不支持的 CAD 源格式: ${job.sourceFormat}`);
+    }
+    asset.status = 'ready';
+    asset.derivedArtifactIds = artifacts.map((artifact) => artifact.id);
+    asset.conversion = { jobId: job.id, result };
+    job.output = { result, artifacts: artifacts.map(publicArtifact) };
+    job.status = 'succeeded';
+    job.stage = 'completed';
+    job.progress = 100;
+    job.completedAt = new Date().toISOString();
+    for (const artifact of artifacts) emitJobEvent(job.id, 'artifact.created', { artifactId: artifact.id, kind: artifact.kind, title: artifact.title });
+    emitJobEvent(job.id, 'job.completed', { outputSummary: `${asset.name} 已转换为 ${artifacts.length} 个真实网页资产` });
+  } catch (error) {
+    asset.status = 'failed';
+    asset.conversion = { jobId: job.id, error: error.message };
+    job.status = 'failed';
+    job.error = error.message;
+    job.diagnostics = [...(job.diagnostics || []), error.message];
+    job.completedAt = new Date().toISOString();
+    emitJobEvent(job.id, 'step.failed', { stepId: job.stage || 'source_parse', error: error.message, recoverable: true });
+  }
+  await persist();
+}
+
+const uploadTypes = new Map(Object.entries({
+  '.mp4': { type: 'video', mime: ['video/mp4', 'application/mp4', 'application/octet-stream'] },
+  '.mov': { type: 'video', mime: ['video/quicktime', 'application/octet-stream'] },
+  '.mkv': { type: 'video', mime: ['video/x-matroska', 'video/mkv', 'application/octet-stream'] },
+  '.webm': { type: 'video', mime: ['video/webm', 'application/octet-stream'] },
+  '.avi': { type: 'video', mime: ['video/x-msvideo', 'video/avi', 'application/octet-stream'] },
+  '.jpg': { type: 'image', mime: ['image/jpeg'] }, '.jpeg': { type: 'image', mime: ['image/jpeg'] },
+  '.png': { type: 'image', mime: ['image/png'] }, '.webp': { type: 'image', mime: ['image/webp'] },
+  '.tif': { type: 'image', mime: ['image/tiff', 'application/octet-stream'] }, '.tiff': { type: 'image', mime: ['image/tiff', 'application/octet-stream'] },
+  '.glb': { type: '3d', mime: ['model/gltf-binary', 'application/octet-stream'] },
+  '.gltf': { type: '3d', mime: ['model/gltf+json', 'application/json', 'text/plain', 'application/octet-stream'] },
+  '.obj': { type: '3d', mime: ['model/obj', 'text/plain', 'application/octet-stream'] },
+  '.fbx': { type: '3d', mime: ['application/octet-stream'] }, '.ply': { type: '3d', mime: ['text/plain', 'application/octet-stream'] },
+  '.las': { type: '3d', mime: ['application/octet-stream'] }, '.laz': { type: '3d', mime: ['application/octet-stream'] },
+  '.spz': { type: '3d', mime: ['application/octet-stream'] },
+  '.skp': { type: 'cad', mime: ['application/octet-stream', 'application/vnd.sketchup.skp'] },
+  '.dwg': { type: 'cad', mime: ['application/octet-stream', 'application/acad', 'application/x-acad', 'application/autocad_dwg', 'image/vnd.dwg'] },
+  '.pdf': { type: 'document', mime: ['application/pdf'] },
+  '.docx': { type: 'document', mime: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/octet-stream'] },
+  '.pptx': { type: 'document', mime: ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/octet-stream'] },
+  '.xlsx': { type: 'document', mime: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream'] },
+  '.csv': { type: 'document', mime: ['text/csv', 'text/plain', 'application/vnd.ms-excel'] },
+  '.txt': { type: 'document', mime: ['text/plain'] }, '.md': { type: 'document', mime: ['text/markdown', 'text/plain'] },
+  '.geojson': { type: 'document', mime: ['application/geo+json', 'application/json', 'text/plain'] }
+}));
+
+function uploadDescriptor(file) {
+  return uploadTypes.get(path.extname(file.originalname || '').toLowerCase()) || null;
+}
+
+function classifyAsset(file) {
+  return uploadDescriptor(file)?.type || null;
+}
+
+function uploadError(code, message, status = 415) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+function storedPathIsInside(filePath, baseDir) {
+  const relative = path.relative(path.resolve(baseDir), path.resolve(filePath));
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+const responseMimeByExtension = new Map([
+  ['.glb', 'model/gltf-binary'], ['.gltf', 'model/gltf+json'], ['.json', 'application/json'],
+  ['.geojson', 'application/geo+json'], ['.csv', 'text/csv; charset=utf-8'], ['.pdf', 'application/pdf'],
+  ['.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'],
+  ['.mp4', 'video/mp4'], ['.webm', 'video/webm'], ['.ply', 'application/octet-stream'], ['.spz', 'application/octet-stream'],
+  ['.skp', 'application/octet-stream'], ['.dwg', 'application/octet-stream'], ['.blend', 'application/octet-stream']
+]);
+
+async function sendStoredFile(req, res, record, baseDir) {
+  if (!record?.storedPath || !storedPathIsInside(record.storedPath, baseDir)) {
+    return res.status(404).json(errorBody('STORED_FILE_NOT_FOUND', '该文件不属于允许的存储边界'));
+  }
+  try {
+    await fsp.access(record.storedPath, fs.constants.R_OK);
+  } catch {
+    return res.status(404).json(errorBody('STORED_FILE_NOT_FOUND', '文件不存在或不可读'));
+  }
+  let servedPath = record.storedPath;
+  if (req.query?.lod === 'preview' && path.extname(record.storedPath).toLowerCase() === '.glb') {
+    const previewPath = `${record.storedPath}.preview.glb`;
+    if (storedPathIsInside(previewPath, baseDir)) {
+      try {
+        await fsp.access(previewPath, fs.constants.R_OK);
+        servedPath = previewPath;
+        res.setHeader('X-GLB-LOD', 'preview');
+      } catch {
+        // Preview LOD is optional; fall back to the registered full GLB.
+      }
+    }
+  }
+  const displayName = String(record.name || record.title || path.basename(servedPath)).replace(/[\r\n"]/g, '_');
+  const mime = record.mimeType || responseMimeByExtension.get(path.extname(servedPath).toLowerCase()) || 'application/octet-stream';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(displayName)}`);
+  // Artifact URLs are immutable IDs: allowing the browser to keep the binary
+  // avoids downloading and reparsing a 26 MB GLB every time the workspace is
+  // reopened.  Keep the encoding variant in the cache key for gzip responses.
+  res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // GLB is already a binary container but still compresses well on the wire.
+  // Use a sidecar only when it is newer than the source and the browser
+  // advertises gzip; the decompressed bytes seen by GLTFLoader are unchanged.
+  const acceptsGzip = String(req?.headers?.['accept-encoding'] || '').toLowerCase().includes('gzip');
+  const extension = path.extname(servedPath).toLowerCase();
+  if (extension === '.glb') {
+    res.setHeader('X-GLB-Accept', String(req?.headers?.['accept-encoding'] || 'none'));
+    res.setHeader('Vary', 'Accept-Encoding');
+  }
+  if (acceptsGzip && extension === '.glb') {
+    const compressedPath = `${servedPath}.gz`;
+    try {
+      const [sourceStat, compressedStat] = await Promise.all([
+        fsp.stat(servedPath),
+        fsp.stat(compressedPath)
+      ]);
+      // Filesystems can round the sidecar mtime down by a few milliseconds.
+      if (compressedStat.mtimeMs + 1000 >= sourceStat.mtimeMs && compressedStat.size > 0) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Length', String(compressedStat.size));
+        res.setHeader('X-GLB-Transfer', 'gzip-sidecar');
+        return res.sendFile(path.resolve(compressedPath));
+      }
+    } catch {
+      // A missing/stale sidecar falls through to the original GLB.
+    }
+  }
+  if (extension === '.glb') res.setHeader('X-GLB-Transfer', 'identity');
+  return res.sendFile(path.resolve(servedPath));
+}
+
+function publicAsset(asset) {
+  const { storedPath, ...safe } = asset;
+  const sourceNature = inferredSourceNature(asset);
+  const testOnly = isLikelyTestAsset(asset) || sourceNature === 'virtual_test';
+  return {
+    ...safe,
+    sourceNature,
+    testOnly,
+    evidenceLevel: testOnly ? 'Scenario' : (safe.evidenceLevel || 'Observed'),
+    url: `/api/assets/${asset.id}/content`
+  };
+}
+
+function errorBody(code, message, details = {}) {
+  return { ok: false, error: { code, message, details } };
+}
+
+function assertProject() {
+  if (!store.project) {
+    const err = new Error('请先创建项目');
+    err.status = 400;
+    err.code = 'PROJECT_REQUIRED';
+    throw err;
+  }
+}
+
+const supportedGeoJsonGeometryTypes = new Set(['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon']);
+
+function geoJsonImportError(code, message, status = 400, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  error.details = details;
+  return error;
+}
+
+function validateGeoJsonCoordinates(value) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  if (value.every((item) => typeof item === 'number')) {
+    return value.length >= 2 && value.length <= 3 && value.every(Number.isFinite);
+  }
+  return value.every(validateGeoJsonCoordinates);
+}
+
+function normalizedGeoJsonFeatures(document) {
+  if (document?.type === 'FeatureCollection' && Array.isArray(document.features)) return document.features;
+  if (document?.type === 'Feature') return [document];
+  throw geoJsonImportError('GEOJSON_FEATURES_REQUIRED', 'GeoJSON 必须是 FeatureCollection 或 Feature');
+}
+
+function fallbackGeoJsonObjectType(geometryType) {
+  if (['Point', 'MultiPoint'].includes(geometryType)) return 'point';
+  if (['LineString', 'MultiLineString'].includes(geometryType)) return 'line';
+  return 'area';
+}
+
+function buildGeoJsonSceneObjects({ asset, document, coordinateSpace, projectId }) {
+  const features = normalizedGeoJsonFeatures(document);
+  if (!features.length) throw geoJsonImportError('GEOJSON_FEATURES_REQUIRED', 'GeoJSON 中没有可导入的 Feature');
+  if (features.length > 5000) throw geoJsonImportError('GEOJSON_FEATURE_LIMIT', '单次最多导入 5000 个 GeoJSON Feature');
+  const createdAt = new Date().toISOString();
+  const ids = new Set();
+  return features.map((feature, index) => {
+    if (feature?.type !== 'Feature' || !feature.geometry || typeof feature.geometry !== 'object') {
+      throw geoJsonImportError('GEOJSON_FEATURE_INVALID', `第 ${index + 1} 个条目不是有效 GeoJSON Feature`);
+    }
+    const geometryType = String(feature.geometry.type || '');
+    if (!supportedGeoJsonGeometryTypes.has(geometryType)) {
+      throw geoJsonImportError('GEOJSON_GEOMETRY_UNSUPPORTED', `第 ${index + 1} 个 Feature 使用不支持的几何类型 ${geometryType || '(空)'}`, 400, { featureIndex: index, geometryType });
+    }
+    if (!validateGeoJsonCoordinates(feature.geometry.coordinates)) {
+      throw geoJsonImportError('GEOJSON_COORDINATES_INVALID', `第 ${index + 1} 个 Feature 的坐标为空或包含非有限数值`, 400, { featureIndex: index });
+    }
+    const sourceProperties = feature.properties && typeof feature.properties === 'object' && !Array.isArray(feature.properties) ? feature.properties : {};
+    const requestedId = String(sourceProperties.object_id || sourceProperties.objectId || '').trim();
+    const objectId = /^[A-Za-z0-9][A-Za-z0-9_-]{1,79}$/.test(requestedId)
+      ? requestedId
+      : `${asset.id}-feature-${String(index + 1).padStart(3, '0')}`.slice(0, 80);
+    if (ids.has(objectId)) throw geoJsonImportError('GEOJSON_OBJECT_ID_DUPLICATE', `GeoJSON 内存在重复对象 ID ${objectId}`, 409, { objectId });
+    ids.add(objectId);
+    const objectType = String(sourceProperties.object_type || sourceProperties.objectType || sourceProperties.sr_type || '').trim() || fallbackGeoJsonObjectType(geometryType);
+    const label = String(sourceProperties.label || sourceProperties.name || objectId).trim();
+    const sourceFeatureId = feature.id === undefined || feature.id === null ? String(index + 1) : String(feature.id);
+    const sourceFeatureHash = crypto.createHash('sha256').update(JSON.stringify(feature)).digest('hex');
+    return {
+      id: objectId,
+      projectId,
+      type: objectType,
+      label,
+      geometry: feature.geometry,
+      properties: {
+        ...sourceProperties,
+        coordinateSpace,
+        source: asset.sourceArtifactId ? 'derived_geojson_artifact' : 'uploaded_geojson',
+        ...(asset.sourceArtifactId ? { sourceArtifactId: asset.sourceArtifactId } : {}),
+        sourceFeatureId,
+        sourceFeatureIndex: index,
+        sourceFeatureHash
+      },
+      evidenceLevel: ['Observed', 'Derived', 'Hypothesis', 'Scenario', 'Expert Approved'].includes(asset.evidenceLevel) ? asset.evidenceLevel : 'Observed',
+      sourceAssetIds: Array.isArray(asset.sourceAssetIds) ? asset.sourceAssetIds : [asset.id],
+      createdAt,
+      updatedAt: createdAt
+    };
+  });
+}
+
+const app = express();
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(self)');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  next();
+});
+if (corsOrigins.length) {
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || corsOrigins.includes(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    credentials: false
+  }));
+}
+app.use(express.json({ limit: '6mb' }));
+
+// Moving-video reconstruction review is an evidence-only workflow.  Its
+// ledgers and overlays are deliberately separate from the model/artifact
+// mutation routes, so frame confirmation cannot move navigation geometry or
+// replace the active model.
+registerReconstructionReviewRoutes({
+  app,
+  rootDir,
+  artifactDir,
+  getProjectId: () => store.activeProjectId,
+  persist,
+  assertProject
+});
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-\u4e00-\u9fff]/g, '_');
+    cb(null, `${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${safeName}`);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 40 },
+  fileFilter: (_req, file, cb) => {
+    file.originalname = repairUtf8Mojibake(file.originalname);
+    const descriptor = uploadDescriptor(file);
+    if (!descriptor) return cb(uploadError('UNSUPPORTED_FILE_TYPE', `不支持文件扩展名 ${path.extname(file.originalname || '') || '(无)'}`));
+    const declaredMime = String(file.mimetype || '').toLowerCase().split(';')[0].trim();
+    if (!descriptor.mime.includes(declaredMime)) return cb(uploadError('MIME_TYPE_MISMATCH', `文件 ${file.originalname} 的 MIME 类型与扩展名不匹配`));
+    return cb(null, true);
+  }
+});
+
+app.get('/api/health', async (_req, res) => {
+  const [gpu, colmap, nerfstudio, nsExport, spz, blender, ffmpeg, ffprobe, python] = await Promise.all([
+    commandAvailableAsync('nvidia-smi'),
+    commandAvailableAsync(process.env.COLMAP_BIN || 'colmap'),
+    commandAvailableAsync(process.env.NERFSTUDIO_BIN || 'ns-train'),
+    commandAvailableAsync(process.env.NS_EXPORT_BIN || 'ns-export'),
+    commandAvailableAsync(process.env.SPZ_BIN || 'spz'),
+    commandAvailableAsync(blenderBin),
+    commandAvailableAsync('ffmpeg'),
+    commandAvailableAsync('ffprobe'),
+    commandAvailableAsync(pythonCommand())
+  ]);
+  const yoloModelPath = String(process.env.YOLO_MODEL_PATH || '').trim();
+  const yoloReady = readableFileAvailable(yoloModelPath);
+  const semantic = semanticRuntimeStatus();
+  res.json({
+    ok: true,
+    timestamp: new Date().toISOString(),
+    llm: {
+      configured: Boolean(llmApiKey),
+      baseUrl: llmBaseUrl,
+      primaryBaseUrl: llmBaseUrl,
+      directBaseUrl: llmDirectBaseUrl,
+      model: llmModel,
+      requestTimeoutMs: llmRequestTimeoutMs,
+      keyPresent: Boolean(llmApiKey)
+    },
+    runtimeCapabilities: {
+      nerfstudio: { state: nerfstudio ? 'ready' : 'external_required', available: nerfstudio, requiredFor: 'enhanced_3dgs', fallback: 'COLMAP point cloud', detail: nerfstudio ? '本机 Nerfstudio / gsplat 可用' : '本机未安装；完整 3DGS 需要配置 NVIDIA CUDA Worker' },
+      nsExport: { state: nsExport ? 'ready' : 'external_required', available: nsExport, requiredFor: 'enhanced_3dgs', fallback: 'COLMAP point cloud', detail: nsExport ? 'Gaussian PLY 导出可用' : '本机未检测到 ns-export；仅影响 Gaussian 导出' },
+      spz: { state: spz ? 'ready' : 'external_required', available: spz, requiredFor: 'enhanced_3dgs', fallback: 'GLB / PLY', detail: spz ? 'SPZ 网页压缩可用' : '本机未检测到 SPZ；GLB / PLY 与 COLMAP 点云仍可用' },
+      blender: { state: blender ? 'ready' : 'external_required', available: blender, requiredFor: 'pbr_model_enhancement', fallback: 'CAD 语义 GLB', detail: blender ? 'Blender 后台建模与 PBR 资产导出可用' : '未配置 BLENDER_BIN；CAD 语义 GLB 仍可使用，但不能生成 BLEND、PBR 增强 GLB 和参观预览' },
+      gpu: { state: gpu ? 'ready' : 'external_required', available: gpu, requiredFor: 'enhanced_3dgs', fallback: 'COLMAP point cloud', detail: gpu ? 'NVIDIA CUDA 本机可用' : '当前为 Intel GPU；完整 3DGS 训练需要外部 NVIDIA CUDA 算力' },
+      colmap: { state: colmap ? 'ready' : 'blocked', available: colmap, requiredFor: 'core_photogrammetry', fallback: null, detail: colmap ? '摄影测量核心运行时可用' : '缺少 COLMAP，摄影测量核心路径被阻断' }
+    },
+    runtimes: {
+      gpu: { available: gpu, note: gpu ? 'NVIDIA runtime detected' : 'No NVIDIA runtime detected; CPU or remote worker required' },
+      colmap,
+      nerfstudio,
+      nsExport,
+      spz,
+      blender,
+      yolo: yoloReady,
+      groundingDino: semantic.groundingDino,
+      sam2: semantic.sam2,
+      skpConverter: true,
+      dwgReader: true,
+      ffmpeg,
+      ffprobe,
+      python
+    },
+    counts: {
+      ...projectCounts(store.activeProjectId),
+      projects: store.projects.length
+    }
+  });
+});
+
+app.get('/api/project', (req, res) => {
+  const includeHistory = req.query.includeHistory === 'true';
+  const bootstrap = req.query.view === 'bootstrap';
+  res.json({
+    ok: true,
+    project: store.project,
+    settings: store.settings,
+    assets: bootstrap ? bootstrapAssets() : recordsForProject(store.assets).map(publicAsset),
+    artifacts: bootstrap
+      ? bootstrapWorkspaceArtifacts().map(publicBootstrapArtifact)
+      : workspaceArtifacts(includeHistory).map(publicArtifact),
+    geographicContext: geographicContextStatus()
+  });
+});
+
+// Store supplemental field photographs and externally published references as a
+// traceable manifest.  The manifest is deliberately separate from the site
+// corridor artifacts so re-running a reconstruction cannot silently discard
+// research material.  Reference URLs are never treated as geometry or as
+// survey-grade evidence by the worker.
+app.post('/api/project/reference-sources', async (req, res) => {
+  try {
+    assertProject();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const sources = Array.isArray(body.sources) ? body.sources : [];
+    const assetIds = Array.isArray(body.assetIds) ? [...new Set(body.assetIds.map((value) => String(value || '').trim()).filter(Boolean))] : [];
+    if (!sources.length && !assetIds.length) return res.status(400).json(errorBody('REFERENCE_SOURCES_REQUIRED', '至少提供一条文章链接或一张补充图片'));
+    if (sources.length > 20) return res.status(400).json(errorBody('REFERENCE_SOURCE_LIMIT', '参考链接最多20条'));
+    const validSources = sources.map((source, index) => {
+      if (!source || typeof source !== 'object' || Array.isArray(source)) throw Object.assign(new Error(`第${index + 1}条参考资料格式无效`), { code: 'REFERENCE_SOURCE_INVALID', status: 400 });
+      const url = String(source.url || '').trim();
+      let parsed;
+      try { parsed = new URL(url); } catch { throw Object.assign(new Error(`第${index + 1}条参考资料 URL 无效`), { code: 'REFERENCE_SOURCE_URL_INVALID', status: 400 }); }
+      if (parsed.protocol !== 'https:' || !['mp.weixin.qq.com', 'weixin.qq.com'].includes(parsed.hostname.toLowerCase())) {
+        throw Object.assign(new Error(`第${index + 1}条参考资料只允许微信文章链接`), { code: 'REFERENCE_SOURCE_HOST_INVALID', status: 400 });
+      }
+      return {
+        url,
+        title: String(source.title || '微信文章参考资料').trim().slice(0, 200),
+        sourceType: String(source.sourceType || 'Reference').trim().slice(0, 40),
+        evidenceLevel: 'Reference',
+        notes: String(source.notes || '文章内容仅作设计背景与材料关系参考，不直接转写为现场实测').trim().slice(0, 1000)
+      };
+    });
+    const assets = assetIds.map((assetId) => store.assets.find((asset) => asset.id === assetId && asset.projectId === store.project.id));
+    if (assets.some((asset) => !asset)) return res.status(404).json(errorBody('REFERENCE_ASSET_NOT_FOUND', '补充资料中包含不属于当前项目的图片资产'));
+    if (assets.some((asset) => asset.type !== 'image')) return res.status(400).json(errorBody('REFERENCE_ASSET_TYPE_INVALID', '补充参考资产必须是图片'));
+    const classifications = body.classifications && typeof body.classifications === 'object' && !Array.isArray(body.classifications) ? body.classifications : {};
+    const allowedEvidence = new Set(['Observed', 'Derived', 'Hypothesis', 'Reference']);
+    const assetRecords = assets.map((asset) => {
+      const supplied = classifications[asset.id] && typeof classifications[asset.id] === 'object' ? classifications[asset.id] : {};
+      const evidenceLevel = allowedEvidence.has(String(supplied.evidenceLevel || 'Observed')) ? String(supplied.evidenceLevel || 'Observed') : 'Observed';
+      const tags = Array.isArray(supplied.tags) ? [...new Set(supplied.tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 30))] : [];
+      const modelLayers = Array.isArray(supplied.modelLayers) ? [...new Set(supplied.modelLayers.map((layer) => String(layer || '').trim()).filter(Boolean).slice(0, 20))] : [];
+      return {
+        assetId: asset.id,
+        name: asset.name,
+        sha256: asset.sha256,
+        sourceNature: asset.sourceNature,
+        evidenceLevel,
+        tags,
+        modelLayers,
+        observations: String(supplied.observations || '').trim().slice(0, 1200),
+        metricUse: '仅用于外观、材质与语义关系校核；没有控制点时不用于绝对尺寸或测绘级配准'
+      };
+    });
+    const now = new Date().toISOString();
+    const manifest = {
+      schema: 'project_reference_sources.v1',
+      projectId: store.project.id,
+      createdAt: now,
+      evidencePolicy: {
+        fieldImages: 'Observed：图片中直接可见的建筑、道路、绿化和材质证据',
+        articleLinks: 'Reference：文章中的历史、设计意图和技术说明，不直接生成现场实体',
+        geometryPolicy: '未提供控制点的资料不得宣称为测绘级几何或绝对坐标'
+      },
+      articleSources: validSources,
+      imageSources: assetRecords,
+      sourceAssetIds: assets.map((asset) => asset.id),
+      dataGaps: [
+        '新增图片没有相机姿态和控制点，不能单独修正道路绝对线位。',
+        '文章中的历史改造、光伏和绿色技术说明需要现场或竣工资料确认后才能升级为 Observed。',
+        '材质颜色可用于展示校核，不能替代现场材质样本或反射率测量。'
+      ]
+    };
+    const filePath = path.join(artifactDir, `reference-sources-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.json`);
+    await fsp.writeFile(filePath, JSON.stringify(manifest, null, 2), 'utf8');
+    const artifact = await addArtifact({
+      projectId: store.project.id,
+      jobId: null,
+      kind: 'reference_source_manifest',
+      title: '补充图片与微信文章参考资料清单',
+      storedPath: filePath,
+      evidenceLevel: 'Reference',
+      metadata: {
+        schema: manifest.schema,
+        sourceAssetIds: manifest.sourceAssetIds,
+        referenceUrlCount: validSources.length,
+        imageSourceCount: assetRecords.length,
+        evidencePolicy: manifest.evidencePolicy,
+        stale: false
+      }
+    });
+    const linkedMetadata = supplementalReferenceMetadata(manifest, artifact.id);
+    for (const targetArtifact of store.artifacts) {
+      if (targetArtifact.projectId !== store.project.id) continue;
+      if (!['site_context_glb', 'site_detail_manifest', 'site_corridor_manifest'].includes(targetArtifact.kind)) continue;
+      if (targetArtifact.metadata?.stale === true) continue;
+      targetArtifact.metadata = { ...(targetArtifact.metadata || {}), ...linkedMetadata };
+    }
+    await persist();
+    res.status(201).json({ ok: true, artifact: publicArtifact(artifact), manifest });
+  } catch (err) {
+    res.status(err.status || 500).json(errorBody(err.code || 'REFERENCE_SOURCE_CREATE_FAILED', err.message));
+  }
+});
+
+// Apply the operator-approved, evidence-bounded reference correction to the
+// newest active site GLB. The original GLB remains stored and is marked stale;
+// the new artifact records the exact reference manifest and keeps approximate
+// registration explicit instead of silently upgrading it to survey geometry.
+app.post('/api/scene/site-corridor/reference-correction', async (_req, res) => {
+  try {
+    assertProject();
+    const activeSourceArtifact = [...store.artifacts].reverse().find((artifact) =>
+      artifact.projectId === store.project.id
+      && artifact.kind === 'site_context_glb'
+      && artifact.metadata?.stale !== true
+    );
+    // Rebuild repeated reference corrections from the original Blender GLB,
+    // not from the already corrected output. This prevents roof reference
+    // proxies and small presentation offsets from accumulating on every run.
+    const sourceArtifact = activeSourceArtifact?.metadata?.sourceArtifactId
+      ? store.artifacts.find((artifact) => artifact.id === activeSourceArtifact.metadata.sourceArtifactId && artifact.projectId === store.project.id)
+      : activeSourceArtifact;
+    if (!sourceArtifact?.storedPath || !storedPathIsInside(sourceArtifact.storedPath, artifactDir)) {
+      return res.status(404).json(errorBody('SITE_REFERENCE_SOURCE_NOT_FOUND', '当前项目没有可修正的周边 GLB'));
+    }
+    const referenceArtifact = [...store.artifacts].reverse().find((artifact) =>
+      artifact.projectId === store.project.id
+      && artifact.kind === 'reference_source_manifest'
+      && artifact.metadata?.stale !== true
+      && artifact.storedPath
+    );
+    if (!referenceArtifact || !storedPathIsInside(referenceArtifact.storedPath, artifactDir)) {
+      return res.status(409).json(errorBody('SITE_REFERENCE_MANIFEST_REQUIRED', '请先登记现场图片和参考链接，再进行资料修正'));
+    }
+    const sourceStat = await fsp.stat(sourceArtifact.storedPath).catch(() => null);
+    const referenceStat = await fsp.stat(referenceArtifact.storedPath).catch(() => null);
+    if (!sourceStat?.isFile() || !referenceStat?.isFile()) return res.status(404).json(errorBody('SITE_REFERENCE_INPUT_MISSING', '周边模型或参考资料清单文件不存在'));
+
+    const runId = id('site_reference_correction');
+    const outputDir = path.join(artifactDir, runId);
+    await fsp.mkdir(outputDir, { recursive: true });
+    const worker = path.join(rootDir, 'workers', 'site_reference_correction.py');
+    const result = await runProcess(pythonCommand(), [
+      worker,
+      '--source', sourceArtifact.storedPath,
+      '--reference-manifest', referenceArtifact.storedPath,
+      '--output-dir', outputDir
+    ]);
+    const payload = lastJsonLine(result.stdout) || lastJsonLine(result.stderr);
+    if (result.code !== 0 || !payload?.ok) throw Object.assign(new Error(payload?.error || result.stderr.trim() || '资料参考修正失败'), { code: 'SITE_REFERENCE_CORRECTION_FAILED' });
+    const correction = payload.result;
+    const correctedPath = path.resolve(String(correction.output || ''));
+    const correctionManifestPath = path.join(outputDir, 'site-context-reference-correction.json');
+    for (const filePath of [correctedPath, correctionManifestPath]) {
+      if (!storedPathIsInside(filePath, outputDir)) throw Object.assign(new Error('资料修正输出路径越界'), { code: 'SITE_REFERENCE_CORRECTION_OUTPUT_INVALID' });
+      const stat = await fsp.stat(filePath).catch(() => null);
+      if (!stat?.isFile()) throw Object.assign(new Error('资料修正缺少输出文件'), { code: 'SITE_REFERENCE_CORRECTION_OUTPUT_MISSING' });
+    }
+
+    const staleAt = new Date().toISOString();
+    // Bind the source reference-manifest ID into the correction record. The
+    // worker cannot know this server-side artifact ID, so its raw payload
+    // intentionally leaves the field empty. Keeping the returned metadata
+    // self-consistent makes the GLB, manifest and project record traceable.
+    correction.referenceManifestId = referenceArtifact.id;
+    for (const artifact of store.artifacts) {
+      if (artifact.projectId !== store.project.id || artifact.kind !== 'site_context_glb' || artifact.metadata?.stale === true) continue;
+      artifact.metadata = { ...(artifact.metadata || {}), stale: true, staleReason: 'superseded_by_reference_correction', staleAt };
+    }
+    const sourceMetadata = sourceArtifact.metadata || {};
+    const correctedReferenceConflicts = correctedReferenceConflictRecords(sourceMetadata.supplementalReferenceConflicts);
+    const addedDetailCounts = {
+      ...(sourceMetadata.detailCounts || {}),
+      roof_pv_reference_proxy: Number(correction.addedReferenceElements?.solarPanelProxy || 0),
+      roof_pv_frame_reference_proxy: Number(correction.addedReferenceElements?.solarPanelFrameProxy || 0),
+      green_roof_reference_proxy: Number(correction.addedReferenceElements?.greenRoofProxy || 0)
+    };
+    const currentDetailCounts = {
+      ...(sourceMetadata.currentStateDetailCounts || sourceMetadata.detailCounts || {}),
+      roof_pv_reference_proxy: Number(correction.addedReferenceElements?.solarPanelProxy || 0),
+      roof_pv_frame_reference_proxy: Number(correction.addedReferenceElements?.solarPanelFrameProxy || 0),
+      green_roof_reference_proxy: Number(correction.addedReferenceElements?.greenRoofProxy || 0)
+    };
+    const correctedArtifact = await addArtifact({
+      projectId: store.project.id,
+      jobId: null,
+      kind: 'site_context_glb',
+      title: '现场资料修正后的建筑周边小道 GLB',
+      storedPath: correctedPath,
+      evidenceLevel: 'Hypothesis',
+      metadata: {
+        ...sourceMetadata,
+        stale: false,
+        staleReason: null,
+        sourceArtifactId: sourceArtifact.id,
+        sourceReferenceManifestId: referenceArtifact.id,
+        referenceCorrection: correction,
+        referenceCorrectionStatus: 'operator_approved_approximate',
+        registrationMethod: 'operator_approved_reference_alignment',
+        coordinateStatus: 'operator_approved_approximate_registration',
+        surveyGrade: false,
+        detailCounts: addedDetailCounts,
+        currentStateDetailCounts: currentDetailCounts,
+        historicalConstructionDetailCounts: sourceMetadata.historicalConstructionDetailCounts || {},
+        currentStatePolicy: '施工围挡、塔吊、临时框架只保留为历史证据；现状展示默认隐藏，不参与现状空间分析。',
+        supplementalReferenceConflicts: correctedReferenceConflicts,
+        outputBytes: (await fsp.stat(correctedPath)).size,
+        supplementalReferenceManifestId: referenceArtifact.id,
+        supplementalReferenceState: 'reference_bound_operator_approved_approximate'
+      }
+    });
+    const correctionManifest = await addArtifact({
+      projectId: store.project.id,
+      jobId: null,
+      kind: 'site_reference_correction_manifest',
+      title: '现场图片与文章参考修正清单',
+      storedPath: correctionManifestPath,
+      evidenceLevel: 'Derived',
+      metadata: {
+        schema: correction.schema,
+        sourceArtifactId: sourceArtifact.id,
+        correctedArtifactId: correctedArtifact.id,
+        referenceManifestId: referenceArtifact.id,
+        registrationStatus: correction.registrationStatus,
+        limitations: correction.limitations || []
+      }
+    });
+    const project = store.projects.find((item) => item.id === store.project.id);
+    if (project) {
+      project.modelRegistration = {
+        ...(project.modelRegistration || {}),
+        siteContextArtifactId: correctedArtifact.id,
+        updatedAt: new Date().toISOString(),
+        evidenceLevel: 'Hypothesis'
+      };
+      store.project = project;
+    }
+    await persist();
+    res.status(201).json({ ok: true, artifact: publicArtifact(correctedArtifact), correctionManifest: publicArtifact(correctionManifest), correction });
+  } catch (err) {
+    res.status(err.status || 500).json(errorBody(err.code || 'SITE_REFERENCE_CORRECTION_FAILED', err.message));
+  }
+});
+
+app.get('/api/projects', (_req, res) => {
+  res.json({
+    ok: true,
+    activeProjectId: store.activeProjectId,
+    projects: store.projects.map((project) => ({ ...project, counts: projectCounts(project.id), active: project.id === store.activeProjectId }))
+  });
+});
+
+function validateProjectBody(body) {
+  if (!String(body.name || '').trim()) return { error: errorBody('PROJECT_NAME_REQUIRED', '项目名称不能为空') };
+  const latitude = Number(body.latitude);
+  const longitude = Number(body.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return { error: errorBody('COORDINATES_REQUIRED', '请提供有效的纬度和经度') };
+  }
+  return {
+    value: {
+      name: String(body.name).trim(), address: String(body.address || '').trim(), latitude, longitude,
+      coordinateSystem: body.coordinateSystem || 'WGS84'
+    }
+  };
+}
+
+app.post('/api/projects', async (req, res) => {
+  const parsed = validateProjectBody(req.body || {});
+  if (parsed.error) return res.status(400).json(parsed.error);
+  const now = new Date().toISOString();
+  const project = { id: id('project'), ...parsed.value, createdAt: now, updatedAt: now, status: 'active' };
+  store.projects.push(project);
+  setActiveProject(project.id);
+  await persist();
+  res.status(201).json({ ok: true, project });
+});
+
+app.post('/api/projects/:projectId/activate', async (req, res) => {
+  const project = store.projects.find((item) => item.id === req.params.projectId);
+  if (!project) return res.status(404).json(errorBody('PROJECT_NOT_FOUND', '项目不存在'));
+  if (project.status === 'archived') return res.status(409).json(errorBody('PROJECT_ARCHIVED', '请先恢复项目再切换'));
+  setActiveProject(project.id);
+  await persist();
+  res.json({ ok: true, project });
+});
+
+app.patch('/api/projects/:projectId', async (req, res) => {
+  const project = store.projects.find((item) => item.id === req.params.projectId);
+  if (!project) return res.status(404).json(errorBody('PROJECT_NOT_FOUND', '项目不存在'));
+  const hasStatus = Object.prototype.hasOwnProperty.call(req.body || {}, 'status');
   const hasModelRegistration = Object.prototype.hasOwnProperty.call(req.body || {}, 'modelRegistration');
   if (!hasStatus && !hasModelRegistration) return res.status(400).json(errorBody('PROJECT_PATCH_EMPTY', '没有可更新的项目字段'));
   if (hasStatus) {
@@ -3425,4 +4517,3 @@ app.listen(port, host, () => {
   console.log(`Spatial Reframe API listening on http://${host}:${port}`);
   console.log(`LLM gateway configured: ${Boolean(llmApiKey)} (${llmBaseUrl}, model=${llmModel})`);
 });
-
