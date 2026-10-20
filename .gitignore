@@ -1,0 +1,25 @@
+node_modules/
+dist/
+data/
+.env
+.env.*
+!.env.example
+*.onnx
+*.engine
+*.pt
+*.pth
+*.spz
+*.ply
+*.las
+*.laz
+.gstack/
+tmp/
+output/
+__pycache__/
+*.pyc
+
+# Hosted source excludes oversized media; originals stay in local workspace
+public/activity-videos/
+public/**/P045.jpg
+public/**/f576fee91b75c7ba13de2f6d74993334.jpg
+
