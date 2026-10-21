@@ -164,7 +164,19 @@ const emptyStore = {
   }
 };
 
+async function readHostedStoreParts() {
+  const dataDir = path.join(rootDir, 'data');
+  const names = (await fsp.readdir(dataDir).catch(() => []))
+    .filter((name) => /^store-slim\\.part\\d+\\.json$/.test(name))
+    .sort();
+  if (!names.length) return null;
+  const raw = (await Promise.all(names.map((name) => fsp.readFile(path.join(dataDir, name), 'utf8')))).join('');
+  return JSON.parse(raw);
+}
+
 async function readStore() {
+  const hosted = await readHostedStoreParts();
+  if (hosted) return { ...emptyStore, ...hosted };
   try {
     const raw = await fsp.readFile(storeFile, 'utf8');
     return { ...emptyStore, ...JSON.parse(raw) };
