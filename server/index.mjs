@@ -170,7 +170,7 @@ async function readHostedStoreParts() {
     .filter((name) => /^store-slim\\.part\\d+\\.json$/.test(name))
     .sort();
   if (!names.length) return null;
-  const raw = (await Promise.all(names.map((name) => fsp.readFile(path.join(dataDir, name), 'utf8')))).join('');
+  const raw = (await Promise.all(names.map((name) => fsp.readFile(path.join(dataDir, name), 'utf8')))).map((chunk) => chunk.replace(/\r?\n$/, '')).join('');
   return JSON.parse(raw);
 }
 
