@@ -4530,3 +4530,5 @@ app.listen(port, host, () => {
   console.log(`Spatial Reframe API listening on http://${host}:${port}`);
   console.log(`LLM gateway configured: ${Boolean(llmApiKey)} (${llmBaseUrl}, model=${llmModel})`);
 });
+
+// Hosted project data is loaded from chunked JSON files under data/.
