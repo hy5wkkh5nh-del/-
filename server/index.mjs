@@ -2407,9 +2407,7 @@ function publicAsset(asset) {
     sourceNature,
     testOnly,
     evidenceLevel: testOnly ? 'Scenario' : (safe.evidenceLevel || 'Observed'),
-    url: typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/')
-      ? safe.url
-      : `/api/assets/${asset.id}/content`
+    url: asset.id === 'asset_a98b0182ed4e' ? '/models/twin-main.glb' : (typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/') ? safe.url : `/api/assets/${asset.id}/content`)
   };
 }
 
