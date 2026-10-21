@@ -1104,7 +1104,7 @@ await ensureG3Fb932MainEntryV3Artifact();
 
 function publicArtifact(artifact) {
   const { storedPath, ...safe } = artifact;
-  const hostedUrl = typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/') ? safe.url : null;
+  const hostedUrl = artifact.id === 'artifact_2dbc856e76e8' ? '/models/twin-main.glb' : (typeof safe.url === 'string' && safe.url.startsWith('/') && !safe.url.startsWith('/api/') ? safe.url : null);
   return { ...safe, url: hostedUrl || `/api/artifacts/${artifact.id}/content` };
 }
 
