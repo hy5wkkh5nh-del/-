@@ -1,35 +1,13 @@
 {
-  "name": "spatial-reframe-workflow",
+  "name": "spatial-reframe-public",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 0.0.0.0\" \"node server/index.mjs\"",
-    "build": "vite build && node scripts/write-site-entrypoint.mjs",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "start": "node server/index.mjs",
-    "preview": "vite preview --host 0.0.0.0"
+    "build": "node scripts/build.mjs",
+    "start": "node server/index.mjs"
   },
-  "dependencies": {
-    "@fontsource-variable/noto-sans-sc": "5.3.0",
-    "@fontsource-variable/noto-serif-sc": "5.3.0",
-    "@fontsource/ibm-plex-mono": "5.3.0",
-    "@node-projects/acad-ts": "^3.1.0",
-    "@vitejs/plugin-react": "6.1.1",
-    "concurrently": "latest",
-    "cors": "latest",
-    "dotenv": "latest",
-    "express": "latest",
-    "lucide-react": "1.43.0",
-    "multer": "latest",
-    "openskp": "^1.2.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "three": "0.185.1",
-    "vite": "8.2.2"
-  },
-  "static": {
-    "directory": "dist"
+  "engines": {
+    "node": ">=20"
   }
 }
-
