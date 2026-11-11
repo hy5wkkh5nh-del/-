@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eff1eb">
+  <title>模型基线与局部样板 · 空间再编排</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./review.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
+  <script type="module" src="./viewer.mjs"></script>
+</head>
+<body>
+  <header class="page-header"><a href="/">空间再编排</a><span>P1 / 模型审阅</span><strong>候选版本 · 未定稿</strong></header>
+  <main>
+    <section class="intro"><p class="eyebrow">先把模型做扎实</p><h1>模型基线与局部样板</h1><p>先核对整场装配，再看一段环境细节。这里展示的是比较候选，尚未替换原模型。</p></section>
+    <div class="workspace">
+      <section class="stage" aria-label="三维模型对照">
+        <div class="stage-heading"><div><span class="eyebrow">3D REVIEW</span><h2 id="scene-title">单一主楼候选</h2></div><span class="candidate-tag">现状纠正候选</span></div>
+        <div class="viewport" id="viewport"><div class="loading" id="loading" role="status" aria-live="polite"><strong id="loading-title">正在载入模型</strong><span id="loading-detail">首次载入约 7.3 MB，请稍候。</span><button type="button" id="retry" hidden>重新载入</button></div><div class="view-note" id="view-note">拖动旋转 · 滚轮缩放 · 右键平移</div></div>
+        <div class="view-controls" aria-label="选择视角"><button data-view="overall" disabled>整场斜视</button><button data-view="top" disabled>俯视核对</button><button data-view="reverse" disabled>背面核对</button><button data-view="sample" disabled>局部样板</button><button data-view="street" disabled>小道人视</button></div>
+        <p class="caption" id="mode-caption">正在载入对照说明…</p>
+      </section>
+      <aside class="controls" aria-label="模型比较设置">
+        <fieldset disabled id="model-controls"><legend>01 / 比较装配</legend>
+          <label class="mode"><input type="radio" name="mode" value="legacy"><span><b>原装配对照</b><small>阶段3外观层 + 原位置SKP。重现叠加关系，不含旧页面的剪裁和调色。</small></span></label>
+          <label class="mode"><input type="radio" name="mode" value="candidate" checked><span><b>单一主楼候选</b><small>关闭明确的71个重复外观件；SKP按既有导航包络重新对中。</small></span></label>
+          <label class="mode"><input type="radio" name="mode" value="stage"><span><b>阶段3单独对照</b><small>只显示阶段3楼体，用来判断两套来源的差异。</small></span></label>
+          <div class="divider"></div><legend class="sublegend">02 / 检查局部样板</legend>
+          <label class="toggle"><input type="checkbox" id="quality" checked><span><b>显示环境样板</b><small>同机位比较：10株分枝树与既有路面、草地材质。</small></span></label>
+          <label class="toggle"><input type="checkbox" id="envelope"><span><b>显示导航包络</b><small>既有定位参照框，不代表已完成测绘或所有构件均应在框内。</small></span></label>
+        </fieldset>
+        <div class="scope-note"><b>这次改到哪里</b><p>主楼源网格、道路轮廓保持原样。环境样板仅覆盖BW-01/BW-02附近一段；其余区域仍保留原有简模。</p><p>树的落点沿用旧候选，树高根据照片形态估计，均待核对。主楼重新对中也需要结合道路与照片确认。</p></div>
+      </aside>
+    </div>
+    <section class="evidence-section"><div class="section-heading"><span class="eyebrow">照片依据</span><h2>样板对应的现场形态</h2><p>P033–P035：分枝乔木、较密树冠、绿化与道路边界。没有据此认定树种、精确树高或每株落点。</p></div><div class="photos" id="photos"></div></section>
+    <section class="gaps-section"><div class="section-heading"><span class="eyebrow">整场差距</span><h2>模型接下来还要补齐什么</h2><p>局部样板用于确定质量方向；整场完成度仍需要逐区核对。</p></div><div class="gap-grid" id="gaps"></div></section>
+    <footer>工作版 P1 · 建筑、环境与模拟分阶段验证。当前页面不提供模拟结论。</footer>
+  </main>
+</body>
+</html>

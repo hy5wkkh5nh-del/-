@@ -1,0 +1,203 @@
+{
+  "schema": "p1_review.v1",
+  "candidateOnly": true,
+  "registration": {
+    "p1Role": "skp_source",
+    "sourceArtifactId": "artifact_2dbc856e76e8",
+    "legacyPosition": [
+      -536.3571575073242,
+      -13.475001156330109,
+      295.68961127929686
+    ],
+    "candidatePosition": [
+      -536.3571243286133,
+      -13.475044945487454,
+      305.8053739953613
+    ],
+    "scale": [
+      1,
+      1.054841,
+      1.038368
+    ],
+    "sourceBuildingCenter": [
+      545.6103668212891,
+      13.675088273168512,
+      -263.65177154541016
+    ],
+    "targetNavigationCenter": [
+      0,
+      14.425,
+      0
+    ],
+    "registrationMethod": "Fit the known source building centre to the fixed navigation envelope after scaling; source vertices unchanged"
+  },
+  "sampleTrees": [
+    {
+      "id": "B-WALK-01-building-side-tree-10",
+      "position": [
+        21.971242492675785,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-building-side-tree-11",
+      "position": [
+        30.971242492675785,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-building-side-tree-12",
+      "position": [
+        39.971242492675785,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-building-side-tree-13",
+      "position": [
+        48.971242492675785,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-building-side-tree-14",
+      "position": [
+        57.971242492675785,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-building-side-tree-15",
+      "position": [
+        66.97124249267578,
+        -13.035901130342484,
+        -30.88435451017681
+      ],
+      "estimatedHeight": 8.882,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-opposite-tree-8",
+      "position": [
+        27.971242492675785,
+        -13.035251176595688,
+        -45.62628872070312
+      ],
+      "estimatedHeight": 10,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-opposite-tree-9",
+      "position": [
+        39.971242492675785,
+        -13.035251176595688,
+        -45.62628872070312
+      ],
+      "estimatedHeight": 10,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-opposite-tree-10",
+      "position": [
+        51.971242492675785,
+        -13.035251176595688,
+        -45.62628872070312
+      ],
+      "estimatedHeight": 10,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    },
+    {
+      "id": "B-WALK-01-opposite-tree-11",
+      "position": [
+        63.971242492675785,
+        -13.035251176595688,
+        -45.62628872070312
+      ],
+      "estimatedHeight": 10,
+      "source": "Inherited candidate X/Z; photo-derived approximate height; not measured"
+    }
+  ],
+  "navigationEnvelope": {
+    "min": [
+      -74.24675750732422,
+      -13.475001156330109,
+      -22.684188720703126
+    ],
+    "max": [
+      92.75324249267578,
+      15.374998843669893,
+      86.75981127929688
+    ]
+  },
+  "photos": [
+    {
+      "id": "P033",
+      "url": "./assets/P033.jpg",
+      "alt": "P033 已有现场照片",
+      "note": "道路、乔木树冠与路边绿化的连续关系。",
+      "sha256": "14aac2f98ce5172ca9927fd4fe9da6d6d7337166a0e33f70108e8ac8cc9656e7"
+    },
+    {
+      "id": "P034",
+      "url": "./assets/P034.jpg",
+      "alt": "P034 已有现场照片",
+      "note": "主楼侧道路、分枝树干与种植池。",
+      "sha256": "a8becc89ffeb549923746077a0b651a505593e7a786b12be7224de7e9b20d5e7"
+    },
+    {
+      "id": "P035",
+      "url": "./assets/P035.jpg",
+      "alt": "P035 已有现场照片",
+      "note": "沿路绿化、边界及远近遮挡关系。",
+      "sha256": "4a8c80aa08d7c4edf3a2a8992a5870ad141e888cc3dcce3202a291de153fdade"
+    }
+  ],
+  "gaps": [
+    {
+      "title": "主楼装配与来源",
+      "current": "存在两套外观叠加。当前候选处理了对中方式，未修改SKP源网格；部分底层构件归属尚未确认。",
+      "next": "结合导航包络与道路衔接审阅候选，再确定唯一主楼装配。"
+    },
+    {
+      "title": "周边建筑与场地",
+      "current": "周边体量、立面、地面和遮挡仍较粗。导航约束可用，逐栋形态与高度证据需要补齐。",
+      "next": "保留已确认平面关系，逐栋核对照片与体量，区分已知和估计部分。"
+    },
+    {
+      "title": "三条路径与出入口",
+      "current": "存在局部小道补件，但全场路径、门口与照片的对应还不完整；部分宽度为推导值。",
+      "next": "逐段标出边界、可通行区与障碍；需要你对图说明道路延伸位置及绿地边缘。"
+    },
+    {
+      "title": "绿化与设施细节",
+      "current": "这次仅10株树做形态样板，位置沿用旧候选。树池、围栏、排水、地面细节未完成整段复原。",
+      "next": "先确定样板尺度和形态，再按现场照片逐段完善；不把未知细节补成事实。"
+    },
+    {
+      "title": "整场质量与可验证性",
+      "current": "当前仍混有简模、推导位置和未核实细节；局部变好不代表全场完成。",
+      "next": "统一建筑、道路、环境的质量；通过同视角、俯视、背面、穿插与接地检查。"
+    },
+    {
+      "title": "模拟与网站的基础",
+      "current": "历史模拟存在固定系数、几何不参与计算等问题。本页不提供效果提升数值。",
+      "next": "模型与通行数据确认后，再做可重复的几何关联模拟，最后接正式展示交互。"
+    }
+  ]
+}

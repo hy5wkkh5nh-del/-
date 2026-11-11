@@ -1,11 +1,14 @@
 {
   "name": "spatial-reframe-public",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "three": "0.185.1"
   },
   "engines": {
     "node": ">=20"
